@@ -21,6 +21,7 @@ enum Action {
 }
 
 pub fn draw(app: &mut App, ui: &mut egui::Ui) {
+    app.track_nav();
     handle_global_keys(app, ui);
     diff_keys(app, ui);
 
@@ -1030,9 +1031,25 @@ fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
                 app.focus = Pane::RightTab;
                 app.search.focus_request = true;
             }
+            Action::NavBack => app.nav_go_back(),
+            Action::NavForward => app.nav_go_forward(),
             _ => {}
         }
     }
+
+    let (mouse_back, mouse_fwd) = ui.input(|i| {
+        (
+            i.pointer.button_pressed(egui::PointerButton::Extra1),
+            i.pointer.button_pressed(egui::PointerButton::Extra2),
+        )
+    });
+    if mouse_back {
+        app.nav_go_back();
+    }
+    if mouse_fwd {
+        app.nav_go_forward();
+    }
+
     if moved
         && let Some(id) = ui.ctx().memory(|m| m.focused())
     {

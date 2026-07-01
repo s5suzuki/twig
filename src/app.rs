@@ -13,6 +13,7 @@ use crate::repo::{self, DiffMode, DiffRow, FileDiff, Graph, RepoNode, StatusEntr
 use crate::search;
 
 pub const LIST_PAGE: usize = 10;
+const NAV_HISTORY_MAX: usize = 100;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -191,6 +192,28 @@ pub enum DeleteTarget {
     RemoteBranch(String),
 }
 
+#[derive(Clone, PartialEq)]
+enum NavSel {
+    None,
+    File { path: String, staged: bool },
+    Commit { oid: Oid },
+    CommitFile { oid: Oid, path: String },
+}
+
+#[derive(Clone)]
+struct NavPoint {
+    tab: Tab,
+    focus: Pane,
+    sel: NavSel,
+    diff_cursor: usize,
+}
+
+impl NavPoint {
+    fn same_place(&self, other: &NavPoint) -> bool {
+        self.tab == other.tab && self.sel == other.sel
+    }
+}
+
 pub struct App {
     pub root: Option<RepoNode>,
     pub error: Option<String>,
@@ -260,6 +283,10 @@ pub struct App {
 
     repaint_gate: Arc<AtomicBool>,
     was_hidden: bool,
+
+    nav_back: Vec<NavPoint>,
+    nav_fwd: Vec<NavPoint>,
+    nav_current: Option<NavPoint>,
 }
 
 impl App {
@@ -327,6 +354,9 @@ impl App {
             watcher_started: false,
             repaint_gate: Arc::new(AtomicBool::new(true)),
             was_hidden: false,
+            nav_back: Vec::new(),
+            nav_fwd: Vec::new(),
+            nav_current: None,
         };
 
         match repo::discover(&path) {
@@ -347,6 +377,9 @@ impl App {
         self.selected_file = None;
         self.clear_commit_selection();
         self.diff = empty_diff();
+        self.nav_back.clear();
+        self.nav_fwd.clear();
+        self.nav_current = None;
         self.reload();
     }
 
@@ -843,6 +876,10 @@ impl App {
             self.diff_ver = self.diff_ver.wrapping_add(1);
             return;
         }
+        self.load_commit(oid);
+    }
+
+    fn load_commit(&mut self, oid: Oid) {
         let short = oid.to_string();
         let label = short[..7.min(short.len())].to_string();
         self.commit_files = repo::commit_files(&self.selected, oid).unwrap_or_default();
@@ -877,6 +914,93 @@ impl App {
         self.diff_ver = self.diff_ver.wrapping_add(1);
         self.reset_diff_nav();
         self.active_tab = Tab::Diff;
+    }
+
+    fn current_nav_point(&self) -> NavPoint {
+        let sel = if let Some((path, staged)) = &self.selected_file {
+            NavSel::File {
+                path: path.clone(),
+                staged: *staged,
+            }
+        } else if let (Some((oid, _)), Some(path)) =
+            (&self.selected_commit, &self.selected_commit_file)
+        {
+            NavSel::CommitFile {
+                oid: *oid,
+                path: path.clone(),
+            }
+        } else if let Some((oid, _)) = &self.selected_commit {
+            NavSel::Commit { oid: *oid }
+        } else {
+            NavSel::None
+        };
+        NavPoint {
+            tab: self.active_tab,
+            focus: self.focus,
+            sel,
+            diff_cursor: self.diff_cursor,
+        }
+    }
+
+    pub fn track_nav(&mut self) {
+        let loc = self.current_nav_point();
+        if let Some(prev) = &self.nav_current
+            && !prev.same_place(&loc)
+        {
+            self.nav_back.push(prev.clone());
+            if self.nav_back.len() > NAV_HISTORY_MAX {
+                self.nav_back.remove(0);
+            }
+            self.nav_fwd.clear();
+        }
+        self.nav_current = Some(loc);
+    }
+
+    fn restore_nav(&mut self, p: NavPoint) {
+        match p.sel.clone() {
+            NavSel::None => {
+                self.selected_file = None;
+                self.clear_commit_selection();
+                self.diff = empty_diff();
+                self.diff_ver = self.diff_ver.wrapping_add(1);
+            }
+            NavSel::File { path, staged } => {
+                self.reset_diff_nav();
+                self.load_file_diff(path, staged);
+            }
+            NavSel::Commit { oid } => self.load_commit(oid),
+            NavSel::CommitFile { oid, path } => {
+                self.load_commit(oid);
+                self.select_commit_file(path);
+            }
+        }
+        self.active_tab = p.tab;
+        self.focus = p.focus;
+        if matches!(p.sel, NavSel::File { .. } | NavSel::CommitFile { .. }) {
+            self.diff_cursor = p.diff_cursor.min(self.diff_last_row());
+            self.diff_scroll_pending = true;
+        }
+        self.nav_current = Some(self.current_nav_point());
+    }
+
+    pub fn nav_go_back(&mut self) {
+        let Some(prev) = self.nav_back.pop() else {
+            return;
+        };
+        if let Some(cur) = self.nav_current.take() {
+            self.nav_fwd.push(cur);
+        }
+        self.restore_nav(prev);
+    }
+
+    pub fn nav_go_forward(&mut self) {
+        let Some(next) = self.nav_fwd.pop() else {
+            return;
+        };
+        if let Some(cur) = self.nav_current.take() {
+            self.nav_back.push(cur);
+        }
+        self.restore_nav(next);
     }
 
     pub fn toggle_hunk(&mut self, hunk_index: usize) {

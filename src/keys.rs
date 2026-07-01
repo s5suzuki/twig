@@ -37,6 +37,8 @@ pub enum Action {
     CycleTabBack,
     ToggleShell,
     OpenSearch,
+    NavBack,
+    NavForward,
 
     DiffFind,
     DiffDown,
@@ -87,6 +89,8 @@ impl Action {
         (Action::CycleTabBack, "cycle-tab-back"),
         (Action::ToggleShell, "toggle-shell"),
         (Action::OpenSearch, "open-search"),
+        (Action::NavBack, "nav-back"),
+        (Action::NavForward, "nav-forward"),
         (Action::DiffFind, "diff-find"),
         (Action::DiffDown, "diff-down"),
         (Action::DiffUp, "diff-up"),
@@ -238,6 +242,8 @@ impl Keymap {
         km.push(Global, ctrl.plus(shift), Tab, CycleTabBack);
         km.push(Global, ctrl, Backtick, ToggleShell);
         km.push(Global, ctrl.plus(shift), F, OpenSearch);
+        km.push(Global, ctrl, O, NavBack);
+        km.push(Global, ctrl, I, NavForward);
 
         km.push(Diff, n, Slash, DiffFind);
         km.push(Diff, n, J, DiffDown);
