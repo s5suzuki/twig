@@ -8,6 +8,8 @@ use std::thread;
 use alacritty_terminal::Term as AlacTerm;
 use alacritty_terminal::event::{Event as AlacEvent, EventListener};
 use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor};
 use egui::{Align2, Color32, FontId, Pos2, Rect, pos2, vec2};
@@ -58,6 +60,7 @@ pub struct Term {
     rows: usize,
     mouse_pressed: Option<u8>,
     last_mouse_cell: Option<(usize, usize)>,
+    selecting: bool,
     preedit: String,
 }
 
@@ -160,6 +163,7 @@ impl Term {
             rows: 24,
             mouse_pressed: None,
             last_mouse_cell: None,
+            selecting: false,
             preedit: String::new(),
         })
     }
@@ -225,16 +229,25 @@ impl Term {
 
         let mut glyphs: Vec<(f32, f32, char, Color32)> = Vec::new();
         let content = self.term.renderable_content();
+        let display_offset = content.display_offset as i32;
+        let selection = content.selection;
+        let sel_bg = ui.visuals().selection.bg_fill;
         for ind in content.display_iter {
             let p = ind.point;
-            if p.line.0 < 0 {
+            let screen_row = p.line.0 + display_offset;
+            if screen_row < 0 || screen_row >= self.rows as i32 {
                 continue;
             }
             let x = rect.left() + p.column.0 as f32 * cw;
-            let y = rect.top() + p.line.0 as f32 * rh;
+            let y = rect.top() + screen_row as f32 * rh;
             let cell = ind.cell;
 
-            let bg = to_color(cell.bg, default_bg);
+            let selected = selection.is_some_and(|r| r.contains(p));
+            let bg = if selected {
+                sel_bg
+            } else {
+                to_color(cell.bg, default_bg)
+            };
             if bg != default_bg {
                 painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(cw, rh)), 0.0, bg);
             }
@@ -246,14 +259,15 @@ impl Term {
             painter.text(pos2(x, y), Align2::LEFT_TOP, c, font.clone(), fg);
         }
         let cur = content.cursor;
+        let cursor_row = cur.point.line.0 + display_offset;
         let cursor_rect = {
             let x = rect.left() + cur.point.column.0 as f32 * cw;
-            let y = rect.top() + cur.point.line.0.max(0) as f32 * rh;
+            let y = rect.top() + cursor_row.clamp(0, self.rows as i32 - 1) as f32 * rh;
             Rect::from_min_size(pos2(x, y), vec2(cw, rh))
         };
-        if cur.shape != CursorShape::Hidden && cur.point.line.0 >= 0 {
+        if cur.shape != CursorShape::Hidden && cursor_row >= 0 && cursor_row < self.rows as i32 {
             let x = rect.left() + cur.point.column.0 as f32 * cw;
-            let y = rect.top() + cur.point.line.0 as f32 * rh;
+            let y = rect.top() + cursor_row as f32 * rh;
             let solid = if focused {
                 default_fg
             } else {
@@ -342,8 +356,34 @@ impl Term {
                     }
                 }
             });
-            let bytes = input_to_bytes(ui);
+            let sel_text = self.term.selection_to_string();
+            let has_sel = sel_text.as_deref().is_some_and(|t| !t.is_empty());
+            let mut bytes: Vec<u8> = Vec::new();
+            let mut do_copy = false;
+            ui.input(|i| {
+                for ev in &i.events {
+                    match ev {
+                        egui::Event::Copy => {
+                            if has_sel {
+                                do_copy = true;
+                            } else {
+                                bytes.push(0x03);
+                            }
+                        }
+                        egui::Event::Cut => bytes.push(0x18),
+                        _ => {}
+                    }
+                }
+            });
+            if do_copy {
+                if let Some(t) = sel_text {
+                    ui.ctx().copy_text(t);
+                }
+                self.term.selection = None;
+            }
+            bytes.extend(input_to_bytes(ui));
             if !bytes.is_empty() {
+                self.term.selection = None;
                 if self.term.grid().display_offset() != 0 {
                     self.term.scroll_display(Scroll::Bottom);
                 }
@@ -362,6 +402,7 @@ impl Term {
         let report = mode.intersects(
             TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION,
         );
+        let display_offset = self.term.grid().display_offset() as i32;
 
         let mut events = Vec::new();
         ui.input(|i| {
@@ -385,8 +426,25 @@ impl Term {
                     pressed,
                     modifiers,
                 } => {
+                    let primary = button == egui::PointerButton::Primary;
+                    if primary && (!report || modifiers.shift) {
+                        if rect.contains(pos) && pressed {
+                            let (point, side) =
+                                pos_to_point(pos, rect, cw, rh, self.cols, self.rows, display_offset);
+                            self.term.selection =
+                                Some(Selection::new(SelectionType::Simple, point, side));
+                            self.selecting = true;
+                        } else if !pressed && self.selecting {
+                            self.selecting = false;
+                            self.copy_selection(ui);
+                        }
+                        continue;
+                    }
                     if !report || !rect.contains(pos) {
                         continue;
+                    }
+                    if pressed {
+                        self.term.selection = None;
                     }
                     let base = match button {
                         egui::PointerButton::Primary => 0u8,
@@ -405,6 +463,14 @@ impl Term {
                     bytes.extend_from_slice(&sgr_mouse(code, col, row, pressed));
                 }
                 egui::Event::PointerMoved(pos) => {
+                    if self.selecting {
+                        let (point, side) =
+                            pos_to_point(pos, rect, cw, rh, self.cols, self.rows, display_offset);
+                        if let Some(sel) = self.term.selection.as_mut() {
+                            sel.update(point, side);
+                        }
+                        continue;
+                    }
                     if !report || !rect.contains(pos) {
                         continue;
                     }
@@ -460,6 +526,34 @@ impl Term {
             let _ = self.writer.flush();
         }
     }
+
+    fn copy_selection(&self, ui: &egui::Ui) {
+        if let Some(text) = self.term.selection_to_string()
+            && !text.is_empty()
+        {
+            ui.ctx().copy_text(text);
+        }
+    }
+}
+
+fn pos_to_point(
+    pos: Pos2,
+    rect: Rect,
+    cw: f32,
+    rh: f32,
+    cols: usize,
+    rows: usize,
+    display_offset: i32,
+) -> (Point, Side) {
+    let rel_x = (pos.x - rect.left()).max(0.0);
+    let col = ((rel_x / cw).floor()).clamp(0.0, (cols - 1) as f32) as usize;
+    let screen_row = (((pos.y - rect.top()) / rh).floor()).clamp(0.0, (rows - 1) as f32) as i32;
+    let side = if rel_x - col as f32 * cw > cw / 2.0 {
+        Side::Right
+    } else {
+        Side::Left
+    };
+    (Point::new(Line(screen_row - display_offset), Column(col)), side)
 }
 
 fn pos_to_cell(
