@@ -464,6 +464,10 @@ fn main() -> eframe::Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().expect("cwd"));
 
+    if std::env::var_os("TWIG_DETACHED").is_none() && detach(&args).is_ok() {
+        return Ok(());
+    }
+
     let native_options = eframe::NativeOptions::default();
     eframe::run_native(
         "twig",
@@ -475,6 +479,30 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(app))
         }),
     )
+}
+
+unsafe extern "C" {
+    fn setsid() -> i32;
+}
+
+fn detach(args: &[String]) -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let exe = std::env::current_exe()?;
+    let mut cmd = Command::new(exe);
+    cmd.args(&args[1..])
+        .env("TWIG_DETACHED", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            setsid();
+            Ok(())
+        });
+    }
+    cmd.spawn().map(|_| ())
 }
 
 fn selftest(path: &std::path::Path, file: &str) {
