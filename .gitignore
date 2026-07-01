@@ -1,0 +1,5 @@
+/target
+target/
+*.md
+*.sh
+!README.md
