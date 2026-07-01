@@ -331,6 +331,47 @@ fn main() -> eframe::Result<()> {
             }
             return Ok(());
         }
+        Some("--remote-list") => {
+            let path = PathBuf::from(&args[2]);
+            for r in repo::remotes(&path) {
+                println!("{}\t{}", r.name, r.url.unwrap_or_default());
+            }
+            return Ok(());
+        }
+        Some(op @ ("--fetch" | "--pull" | "--push")) => {
+            let path = PathBuf::from(&args[2]);
+            let remote = args
+                .get(3)
+                .cloned()
+                .or_else(|| repo::primary_remote(&path))
+                .unwrap_or_else(|| "origin".to_string());
+            let progress = |_recv: usize, _total: usize| {};
+            let res: Result<repo::SeqOutcome, git2::Error> = match op {
+                "--fetch" => repo::fetch(&path, &remote, progress).map(|()| repo::SeqOutcome::Done),
+                "--pull" => repo::pull(&path, &remote, progress),
+                _ => match args.get(4).cloned().or_else(|| repo::head_push_refspec(&path)) {
+                    Some(refspec) => {
+                        repo::push(&path, &remote, std::slice::from_ref(&refspec), progress)
+                            .map(|()| repo::SeqOutcome::Done)
+                    }
+                    None => Err(git2::Error::from_str("not on a branch; specify a refspec")),
+                },
+            };
+            match res {
+                Ok(repo::SeqOutcome::Done) => {
+                    println!("OK: {op} {remote}");
+                    dump(&path);
+                }
+                Ok(repo::SeqOutcome::Conflicts(files)) => {
+                    println!("CONFLICTS: {} file(s):", files.len());
+                    for f in &files {
+                        println!("  {f}");
+                    }
+                }
+                Err(e) => eprintln!("{op} failed: {e}"),
+            }
+            return Ok(());
+        }
         Some(op @ ("--stage" | "--unstage" | "--discard" | "--commit")) => {
             let path = PathBuf::from(&args[2]);
             let res = match op {

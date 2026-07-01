@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use git2::{
-    ApplyLocation, ApplyOptions, Diff, DiffOptions, ErrorCode, Index, IndexAddOption, Oid, Rebase,
-    Repository, RepositoryState, Signature,
+    ApplyLocation, ApplyOptions, Config, Cred, CredentialType, Diff, DiffOptions, ErrorCode,
+    FetchOptions, Index, IndexAddOption, Oid, PushOptions, Rebase, RemoteCallbacks, Repository,
+    RepositoryState, Signature,
 };
 
 pub fn stage(repo_path: &Path, paths: &[String]) -> Result<(), git2::Error> {
@@ -139,6 +140,7 @@ pub enum SeqState {
     Rebase,
     CherryPick,
     Revert,
+    Merge,
 }
 
 pub fn seq_state(repo_path: &Path) -> SeqState {
@@ -150,6 +152,7 @@ pub fn seq_state(repo_path: &Path) -> SeqState {
             SeqState::CherryPick
         }
         Ok(RepositoryState::Revert) | Ok(RepositoryState::RevertSequence) => SeqState::Revert,
+        Ok(RepositoryState::Merge) => SeqState::Merge,
         _ => SeqState::None,
     }
 }
@@ -267,6 +270,29 @@ fn reset_hard_to_head(repo_path: &Path) -> Result<(), git2::Error> {
     let head = repo.head()?.peel_to_commit()?;
     repo.reset(head.as_object(), git2::ResetType::Hard, None)?;
     repo.cleanup_state()
+}
+
+pub fn merge_continue(repo_path: &Path) -> Result<SeqOutcome, git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    let mut index = repo.index()?;
+    if index.has_conflicts() {
+        return Ok(SeqOutcome::Conflicts(conflict_paths(&index)));
+    }
+    let their_oid = pseudo_ref_oid(&repo, "MERGE_HEAD")?;
+    let their = repo.find_commit(their_oid)?;
+    let tree = repo.find_tree(index.write_tree()?)?;
+    let head = repo.head()?.peel_to_commit()?;
+    let sig = repo.signature()?;
+    let msg = repo
+        .message()
+        .unwrap_or_else(|_| format!("Merge commit '{their_oid}'"));
+    repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &[&head, &their])?;
+    repo.cleanup_state()?;
+    Ok(SeqOutcome::Done)
+}
+
+pub fn merge_abort(repo_path: &Path) -> Result<(), git2::Error> {
+    reset_hard_to_head(repo_path)
 }
 
 fn finish_cherry_pick(repo: &Repository, picked: &git2::Commit) -> Result<SeqOutcome, git2::Error> {
@@ -442,4 +468,197 @@ pub fn commit(repo_path: &Path, message: &str) -> Result<(), git2::Error> {
 
     repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parent_refs)?;
     Ok(())
+}
+
+pub struct RemoteInfo {
+    pub name: String,
+    pub url: Option<String>,
+}
+
+pub fn remotes(repo_path: &Path) -> Vec<RemoteInfo> {
+    let mut out = Vec::new();
+    if let Ok(repo) = Repository::open(repo_path)
+        && let Ok(names) = repo.remotes()
+    {
+        for name in names.iter().flatten().flatten() {
+            let url = repo
+                .find_remote(name)
+                .ok()
+                .and_then(|r| r.url().ok().map(String::from));
+            out.push(RemoteInfo {
+                name: name.to_string(),
+                url,
+            });
+        }
+    }
+    out
+}
+
+pub fn primary_remote(repo_path: &Path) -> Option<String> {
+    let repo = Repository::open(repo_path).ok()?;
+    if let Ok(head) = repo.head()
+        && let Ok(branch) = head.shorthand()
+        && let Ok(cfg) = repo.config()
+        && let Ok(remote) = cfg.get_string(&format!("branch.{branch}.remote"))
+    {
+        return Some(remote);
+    }
+    let names = repo.remotes().ok()?;
+    if names.iter().flatten().flatten().any(|n| n == "origin") {
+        return Some("origin".to_string());
+    }
+    names.get(0).ok().flatten().map(String::from)
+}
+
+pub fn head_push_refspec(repo_path: &Path) -> Option<String> {
+    let repo = Repository::open(repo_path).ok()?;
+    let head = repo.head().ok()?;
+    if !head.is_branch() {
+        return None;
+    }
+    let name = head.shorthand().ok()?;
+    Some(format!("refs/heads/{name}:refs/heads/{name}"))
+}
+
+fn credentials_cb(
+    url: &str,
+    username: Option<&str>,
+    allowed: CredentialType,
+) -> Result<Cred, git2::Error> {
+    if allowed.contains(CredentialType::USERNAME) {
+        return Cred::username(username.unwrap_or("git"));
+    }
+    if allowed.contains(CredentialType::SSH_KEY) {
+        return Cred::ssh_key_from_agent(username.unwrap_or("git"));
+    }
+    if allowed.contains(CredentialType::USER_PASS_PLAINTEXT) {
+        let cfg = Config::open_default()?;
+        return Cred::credential_helper(&cfg, url, username);
+    }
+    if allowed.contains(CredentialType::DEFAULT) {
+        return Cred::default();
+    }
+    Err(git2::Error::from_str(
+        "no supported authentication method available",
+    ))
+}
+
+pub fn fetch<F: FnMut(usize, usize)>(
+    repo_path: &Path,
+    remote: &str,
+    mut progress: F,
+) -> Result<(), git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    let mut cbs = RemoteCallbacks::new();
+    cbs.credentials(credentials_cb);
+    cbs.transfer_progress(|stats| {
+        progress(stats.received_objects(), stats.total_objects());
+        true
+    });
+    let mut opts = FetchOptions::new();
+    opts.remote_callbacks(cbs);
+    let mut remote = repo.find_remote(remote)?;
+    remote.fetch(&[] as &[&str], Some(&mut opts), None)?;
+    Ok(())
+}
+
+pub fn push<F: FnMut(usize, usize)>(
+    repo_path: &Path,
+    remote: &str,
+    refspecs: &[String],
+    mut progress: F,
+) -> Result<(), git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    let reject: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+    let mut cbs = RemoteCallbacks::new();
+    cbs.credentials(credentials_cb);
+    cbs.push_transfer_progress(|current, total, _bytes| progress(current, total));
+    cbs.push_update_reference(|refname, status| {
+        if let Some(msg) = status {
+            *reject.borrow_mut() = Some(format!("{refname}: {msg}"));
+        }
+        Ok(())
+    });
+    let mut opts = PushOptions::new();
+    opts.remote_callbacks(cbs);
+    let mut remote = repo.find_remote(remote)?;
+    remote.push(refspecs, Some(&mut opts))?;
+    drop(opts);
+    match reject.into_inner() {
+        Some(msg) => Err(git2::Error::from_str(&msg)),
+        None => Ok(()),
+    }
+}
+
+pub fn pull<F: FnMut(usize, usize)>(
+    repo_path: &Path,
+    remote_name: &str,
+    mut progress: F,
+) -> Result<SeqOutcome, git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    {
+        let mut cbs = RemoteCallbacks::new();
+        cbs.credentials(credentials_cb);
+        cbs.transfer_progress(|stats| {
+            progress(stats.received_objects(), stats.total_objects());
+            true
+        });
+        let mut opts = FetchOptions::new();
+        opts.remote_callbacks(cbs);
+        let mut remote = repo.find_remote(remote_name)?;
+        remote.fetch(&[] as &[&str], Some(&mut opts), None)?;
+    }
+
+    let fetch_head = repo.find_reference("FETCH_HEAD")?;
+    let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
+    let analysis = repo.merge_analysis(&[&fetch_commit])?.0;
+
+    if analysis.is_up_to_date() {
+        return Ok(SeqOutcome::Done);
+    }
+
+    if analysis.is_fast_forward() {
+        let obj = repo.find_object(fetch_commit.id(), None)?;
+        repo.checkout_tree(&obj, Some(git2::build::CheckoutBuilder::new().safe()))?;
+        let refname = repo.head()?.name().map(String::from)?;
+        repo.find_reference(&refname)?
+            .set_target(fetch_commit.id(), "pull: fast-forward")?;
+        return Ok(SeqOutcome::Done);
+    }
+
+    repo.merge(&[&fetch_commit], None, None)?;
+    let mut index = repo.index()?;
+    if index.has_conflicts() {
+        return Ok(SeqOutcome::Conflicts(conflict_paths(&index)));
+    }
+    let tree = repo.find_tree(index.write_tree()?)?;
+    let head = repo.head()?.peel_to_commit()?;
+    let their = repo.find_commit(fetch_commit.id())?;
+    let sig = repo.signature()?;
+    let msg = repo
+        .message()
+        .unwrap_or_else(|_| format!("Merge commit '{}'", fetch_commit.id()));
+    repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &[&head, &their])?;
+    repo.cleanup_state()?;
+    Ok(SeqOutcome::Done)
+}
+
+pub fn checkout_tracking(repo_path: &Path, remote_ref: &str) -> Result<(), git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    let local = remote_ref.split_once('/').map(|(_, b)| b).unwrap_or(remote_ref);
+
+    let obj = repo.revparse_single(&format!("refs/remotes/{remote_ref}"))?;
+    let commit = obj.peel_to_commit()?;
+
+    if repo.find_branch(local, git2::BranchType::Local).is_err() {
+        let mut branch = repo.branch(local, &commit, false)?;
+        let _ = branch.set_upstream(Some(remote_ref));
+    }
+
+    let refname = format!("refs/heads/{local}");
+    repo.checkout_tree(
+        commit.as_object(),
+        Some(git2::build::CheckoutBuilder::new().safe()),
+    )?;
+    repo.set_head(&refname)
 }

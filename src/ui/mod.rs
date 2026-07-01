@@ -25,6 +25,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
 
     app.ensure_watcher(ui.ctx());
     app.update_visibility(ui.ctx());
+    app.poll_remote();
     if app.take_external_change() {
         app.refresh_from_disk();
     }
@@ -77,6 +78,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
             if stash_clicked {
                 app.stash_push();
             }
+            remote_bar(app, ui);
             if let Some(a) = draw_stashes(app, ui) {
                 match a {
                     StashAction::Pop(i) => app.stash_pop(i),
@@ -192,6 +194,9 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         Some(graph_view::GraphAction::CherryPick(oid)) => app.cherry_pick(oid),
                         Some(graph_view::GraphAction::Revert(oid)) => app.revert(oid),
                         Some(graph_view::GraphAction::Switch(name)) => app.switch_branch(name),
+                        Some(graph_view::GraphAction::CheckoutRemote(name)) => {
+                            app.checkout_tracking(name)
+                        }
                         Some(graph_view::GraphAction::CheckoutCommit(oid)) => {
                             app.checkout_commit(oid)
                         }
@@ -665,6 +670,48 @@ fn draw_stashes(app: &App, ui: &mut egui::Ui) -> Option<StashAction> {
             }
         });
     action
+}
+
+fn remote_bar(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(!app.remote_busy, |ui| {
+            if ui
+                .button("\u{f021}  Fetch")
+                .on_hover_text("Fetch from remote")
+                .clicked()
+            {
+                app.fetch(&ctx);
+            }
+            if ui
+                .button("\u{f0ab}  Pull")
+                .on_hover_text("Fetch + merge into the current branch")
+                .clicked()
+            {
+                app.pull(&ctx);
+            }
+            if ui
+                .button("\u{f0aa}  Push")
+                .on_hover_text("Push the current branch")
+                .clicked()
+            {
+                app.push(&ctx);
+            }
+        });
+        if app.remote_busy {
+            ui.spinner();
+            let verb = match app.remote_kind {
+                crate::app::RemoteKind::Fetch => "Fetching",
+                crate::app::RemoteKind::Pull => "Pulling",
+                crate::app::RemoteKind::Push => "Pushing",
+            };
+            let text = match app.remote_progress {
+                Some((r, t)) if t > 0 => format!("{verb} {r}/{t}"),
+                _ => format!("{verb}\u{2026}"),
+            };
+            ui.weak(text);
+        }
+    });
 }
 
 fn rebase_banner(app: &mut App, ui: &mut egui::Ui) {

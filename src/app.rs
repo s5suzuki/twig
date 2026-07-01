@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 
 use git2::Oid;
 
@@ -38,6 +40,7 @@ pub enum SeqKind {
     Rebase,
     CherryPick,
     Revert,
+    Merge,
 }
 
 impl SeqKind {
@@ -46,8 +49,31 @@ impl SeqKind {
             SeqKind::Rebase => "Rebase",
             SeqKind::CherryPick => "Cherry-pick",
             SeqKind::Revert => "Revert",
+            SeqKind::Merge => "Merge",
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RemoteKind {
+    Fetch,
+    Pull,
+    Push,
+}
+
+impl RemoteKind {
+    fn verb(self) -> &'static str {
+        match self {
+            RemoteKind::Fetch => "Fetch",
+            RemoteKind::Pull => "Pull",
+            RemoteKind::Push => "Push",
+        }
+    }
+}
+
+enum RemoteMsg {
+    Progress { received: usize, total: usize },
+    Done(Result<repo::SeqOutcome, String>),
 }
 
 pub struct SeqStatus {
@@ -113,6 +139,11 @@ pub struct App {
     pub config: Config,
     pub settings_open: bool,
 
+    pub remote_busy: bool,
+    pub remote_kind: RemoteKind,
+    pub remote_progress: Option<(usize, usize)>,
+    remote_task: Option<Receiver<RemoteMsg>>,
+
     watch_root: PathBuf,
     watcher: Option<crate::watch::WorktreeWatcher>,
     watcher_started: bool,
@@ -167,6 +198,10 @@ impl App {
             confirm_reset: None,
             config,
             settings_open: false,
+            remote_busy: false,
+            remote_kind: RemoteKind::Fetch,
+            remote_progress: None,
+            remote_task: None,
             watch_root: path.clone(),
             watcher: None,
             watcher_started: false,
@@ -653,6 +688,7 @@ impl App {
             SeqKind::Rebase => repo::rebase_continue(&self.selected),
             SeqKind::CherryPick => repo::cherry_pick_continue(&self.selected),
             SeqKind::Revert => repo::revert_continue(&self.selected),
+            SeqKind::Merge => repo::merge_continue(&self.selected),
         };
         self.apply_seq_outcome(kind, r, "continue");
     }
@@ -665,6 +701,7 @@ impl App {
             SeqKind::Rebase => repo::rebase_abort(&self.selected),
             SeqKind::CherryPick => repo::cherry_pick_abort(&self.selected),
             SeqKind::Revert => repo::revert_abort(&self.selected),
+            SeqKind::Merge => repo::merge_abort(&self.selected),
         };
         if let Err(e) = r {
             self.error = Some(format!("{} --abort failed: {e}", kind.label()));
@@ -796,6 +833,126 @@ impl App {
         self.after_commit_topology_change();
     }
 
+    pub fn checkout_tracking(&mut self, remote_ref: String) {
+        if self.busy_with_seq() {
+            return;
+        }
+        match repo::checkout_tracking(&self.selected, &remote_ref) {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("checkout failed: {e}")),
+        }
+        self.after_commit_topology_change();
+    }
+
+    pub fn fetch(&mut self, ctx: &egui::Context) {
+        let remote = repo::primary_remote(&self.selected);
+        self.start_remote(ctx, RemoteKind::Fetch, remote, Vec::new());
+    }
+
+    pub fn pull(&mut self, ctx: &egui::Context) {
+        if self.busy_with_seq() {
+            return;
+        }
+        let remote = repo::primary_remote(&self.selected);
+        self.start_remote(ctx, RemoteKind::Pull, remote, Vec::new());
+    }
+
+    pub fn push(&mut self, ctx: &egui::Context) {
+        let remote = repo::primary_remote(&self.selected);
+        let Some(refspec) = repo::head_push_refspec(&self.selected) else {
+            self.error = Some("Not on a branch to push".to_string());
+            return;
+        };
+        self.start_remote(ctx, RemoteKind::Push, remote, vec![refspec]);
+    }
+
+    fn start_remote(
+        &mut self,
+        ctx: &egui::Context,
+        kind: RemoteKind,
+        remote: Option<String>,
+        refspecs: Vec<String>,
+    ) {
+        if self.remote_busy {
+            self.error = Some("A remote operation is already running".to_string());
+            return;
+        }
+        let Some(remote) = remote else {
+            self.error = Some("No remote configured".to_string());
+            return;
+        };
+
+        let (tx, rx) = mpsc::channel();
+        let path = self.selected.clone();
+        let ctx = ctx.clone();
+        let gate = self.repaint_gate.clone();
+
+        self.remote_busy = true;
+        self.remote_kind = kind;
+        self.remote_progress = None;
+        self.remote_task = Some(rx);
+        self.error = None;
+
+        thread::spawn(move || {
+            let progress = |received, total| {
+                let _ = tx.send(RemoteMsg::Progress { received, total });
+                if gate.load(Ordering::Relaxed) {
+                    ctx.request_repaint();
+                }
+            };
+            let result = match kind {
+                RemoteKind::Fetch => {
+                    repo::fetch(&path, &remote, progress).map(|()| repo::SeqOutcome::Done)
+                }
+                RemoteKind::Push => {
+                    repo::push(&path, &remote, &refspecs, progress).map(|()| repo::SeqOutcome::Done)
+                }
+                RemoteKind::Pull => repo::pull(&path, &remote, progress),
+            };
+            let _ = tx.send(RemoteMsg::Done(result.map_err(|e| e.to_string())));
+            if gate.load(Ordering::Relaxed) {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    pub fn poll_remote(&mut self) {
+        let Some(rx) = &self.remote_task else {
+            return;
+        };
+        let mut done = None;
+        loop {
+            match rx.try_recv() {
+                Ok(RemoteMsg::Progress { received, total }) => {
+                    self.remote_progress = Some((received, total));
+                }
+                Ok(RemoteMsg::Done(res)) => {
+                    done = Some(res);
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    done = Some(Err("remote worker exited unexpectedly".to_string()));
+                    break;
+                }
+            }
+        }
+        if let Some(res) = done {
+            self.finish_remote(res);
+        }
+    }
+
+    fn finish_remote(&mut self, res: Result<repo::SeqOutcome, String>) {
+        self.remote_task = None;
+        self.remote_busy = false;
+        self.remote_progress = None;
+        match res {
+            Ok(_) => self.error = None,
+            Err(e) => self.error = Some(format!("{} failed: {e}", self.remote_kind.verb())),
+        }
+        self.after_commit_topology_change();
+    }
+
     fn after_commit_topology_change(&mut self) {
         self.selected_file = None;
         self.clear_commit_selection();
@@ -812,6 +969,7 @@ impl App {
             repo::SeqState::Rebase => SeqKind::Rebase,
             repo::SeqState::CherryPick => SeqKind::CherryPick,
             repo::SeqState::Revert => SeqKind::Revert,
+            repo::SeqState::Merge => SeqKind::Merge,
         };
         let conflicts = repo::seq_conflicts(&self.selected);
         match &mut self.seq {

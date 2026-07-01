@@ -45,6 +45,7 @@ pub enum GraphAction {
     CherryPick(Oid),
     Revert(Oid),
     Switch(String),
+    CheckoutRemote(String),
     CheckoutCommit(Oid),
     CreateBranch(Oid),
     RenameBranch(String),
@@ -294,6 +295,14 @@ pub fn draw(
                             ui.close();
                         }
                     }
+                    RefKind::RemoteBranch
+                        if ui
+                            .button(format!("\u{e725}  Checkout {} as local branch", rf.name))
+                            .clicked()
+                        => {
+                            menu_action = Some(GraphAction::CheckoutRemote(rf.name.clone()));
+                            ui.close();
+                        }
                     RefKind::Tag
                         if ui
                             .button(format!("\u{f1f8}  Delete tag {}", rf.name))
