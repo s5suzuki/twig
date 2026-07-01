@@ -51,7 +51,12 @@ fn make_diff<'a>(
     opts: &mut DiffOptions,
 ) -> Result<Diff<'a>, git2::Error> {
     match mode {
-        DiffMode::Unstaged => repo.diff_index_to_workdir(None, Some(opts)),
+        DiffMode::Unstaged => {
+            opts.include_untracked(true);
+            opts.recurse_untracked_dirs(true);
+            opts.show_untracked_content(true);
+            repo.diff_index_to_workdir(None, Some(opts))
+        }
         DiffMode::Staged => {
             let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
             repo.diff_tree_to_index(head_tree.as_ref(), None, Some(opts))
@@ -224,6 +229,12 @@ pub fn commit_files(repo_path: &Path, oid: Oid) -> Result<Vec<CommitFile>, git2:
         });
     }
     Ok(out)
+}
+
+pub fn commit_message(repo_path: &Path, oid: Oid) -> Result<String, git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    let commit = repo.find_commit(oid)?;
+    Ok(commit.message().unwrap_or("").to_string())
 }
 
 pub fn commit_file_diff(repo_path: &Path, oid: Oid, file: &str) -> Result<FileDiff, git2::Error> {

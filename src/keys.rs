@@ -34,7 +34,9 @@ pub enum Action {
     FocusDown,
     CycleTab,
     ToggleShell,
+    OpenSearch,
 
+    DiffFind,
     DiffDown,
     DiffUp,
     DiffTop,
@@ -80,6 +82,8 @@ impl Action {
         (Action::FocusDown, "focus-down"),
         (Action::CycleTab, "cycle-tab"),
         (Action::ToggleShell, "toggle-shell"),
+        (Action::OpenSearch, "open-search"),
+        (Action::DiffFind, "diff-find"),
         (Action::DiffDown, "diff-down"),
         (Action::DiffUp, "diff-up"),
         (Action::DiffTop, "diff-top"),
@@ -227,7 +231,9 @@ impl Keymap {
         km.push(Global, alt, J, FocusDown);
         km.push(Global, n, Tab, CycleTab);
         km.push(Global, ctrl, Backtick, ToggleShell);
+        km.push(Global, ctrl.plus(shift), F, OpenSearch);
 
+        km.push(Diff, n, Slash, DiffFind);
         km.push(Diff, n, J, DiffDown);
         km.push(Diff, n, K, DiffUp);
         km.push_seq(Diff, Chord::new(n, G), Chord::new(n, G), DiffTop);

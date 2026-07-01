@@ -4,6 +4,7 @@ mod editor;
 mod fonts;
 mod keys;
 mod repo;
+mod search;
 mod term;
 mod ui;
 mod watch;
@@ -95,6 +96,56 @@ fn main() -> eframe::Result<()> {
         }
         Some("--selftest") => {
             selftest(&PathBuf::from(&args[2]), &args[3]);
+            return Ok(());
+        }
+        Some("--selftest-search") => {
+            selftest_search(&PathBuf::from(&args[2]), &args[3]);
+            return Ok(());
+        }
+        Some("--search") => {
+            let path = PathBuf::from(&args[2]);
+            let pattern = &args[3];
+            let flags: Vec<&str> = args[4..].iter().map(String::as_str).collect();
+            let regex = flags.contains(&"regex");
+            let case_sensitive = !flags.contains(&"nocase");
+            match search::Matcher::new(pattern, regex, case_sensitive) {
+                Ok(m) => {
+                    let hits = search::search_repo(&path, &m);
+                    let total: usize = hits.iter().map(|f| f.lines.len()).sum();
+                    println!("{} file(s), {total} line(s)", hits.len());
+                    for f in &hits {
+                        println!("{}", f.path);
+                        for l in &f.lines {
+                            println!("  {}: {}", l.line_no, l.text);
+                        }
+                    }
+                }
+                Err(e) => eprintln!("bad pattern: {e}"),
+            }
+            return Ok(());
+        }
+        Some("--replace-file") => {
+            let path = PathBuf::from(&args[2]);
+            let file = &args[3];
+            let pattern = &args[4];
+            let replacement = &args[5];
+            let flags: Vec<&str> = args[6..].iter().map(String::as_str).collect();
+            let regex = flags.contains(&"regex");
+            let case_sensitive = !flags.contains(&"nocase");
+            let abs = path.join(file);
+            match search::Matcher::new(pattern, regex, case_sensitive) {
+                Ok(m) => match std::fs::read_to_string(&abs) {
+                    Ok(text) => {
+                        let (new, n) = search::replace_all_in_text(&m, &text, replacement);
+                        match std::fs::write(&abs, new) {
+                            Ok(()) => println!("OK: replaced {n} match(es) in {file}"),
+                            Err(e) => eprintln!("write failed: {e}"),
+                        }
+                    }
+                    Err(e) => eprintln!("read failed: {e}"),
+                },
+                Err(e) => eprintln!("bad pattern: {e}"),
+            }
             return Ok(());
         }
         Some("--commit-files") => {
@@ -614,6 +665,72 @@ fn selftest(path: &std::path::Path, file: &str) {
     report("after btn click", &app);
     let staged = repo::load_status(path).map(|(s, _)| s.len()).unwrap_or(0);
     println!("staged entries now = {staged}  (expect >0 if stage worked)");
+}
+
+fn selftest_search(path: &std::path::Path, pattern: &str) {
+    let mut app = app::App::new(path.to_path_buf());
+    app.shell_open = false;
+    app.active_tab = app::Tab::Search;
+    app.focus = app::Pane::RightTab;
+
+    let ctx = egui::Context::default();
+    let frame = |app: &mut app::App| {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
+        ctx.begin_pass(egui::RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        });
+        let mut ui = egui::Ui::new(
+            ctx.clone(),
+            egui::Id::new("selftest_search_root"),
+            egui::UiBuilder::new().max_rect(rect),
+        );
+        ui::draw(app, &mut ui);
+        let _ = ctx.end_pass();
+    };
+
+    app.search.query = pattern.to_string();
+    app.search_run();
+    let files = app.search.results.len();
+    let lines: usize = app.search.results.iter().map(|f| f.lines.len()).sum();
+    println!("search '{pattern}': {files} file(s), {lines} line(s), selected={}", app.search.selected_count());
+    frame(&mut app);
+    println!("rendered Search tab OK (err={:?})", app.error);
+
+    let changed_hit = app
+        .search
+        .results
+        .iter()
+        .map(|f| f.path.clone())
+        .find(|p| app.unstaged.iter().chain(app.staged.iter()).any(|e| &e.path == p));
+    if let Some(first) = changed_hit {
+        app.select_file(first.clone(), false);
+        app.open_find();
+        app.find.query = pattern.to_string();
+        app.active_tab = app::Tab::Diff;
+        frame(&mut app);
+        println!(
+            "find bar on {first}: open={} matches={} rendered OK",
+            app.find.open,
+            app.find.matches.len()
+        );
+        app.find_next();
+        println!("find_next -> current={} cursor={}", app.find.current, app.diff_cursor);
+    }
+
+    if let Some(f) = app.search.results.first() {
+        let target = f.path.clone();
+        let before = std::fs::read_to_string(path.join(&target)).unwrap_or_default();
+        app.search.replace = "<REPLACED>".to_string();
+        app.search_confirm = true;
+        app.search_apply();
+        let after = std::fs::read_to_string(path.join(&target)).unwrap_or_default();
+        println!(
+            "apply on {target}: changed={} now_matches={}",
+            before != after,
+            app.search.results.iter().map(|f| f.lines.len()).sum::<usize>()
+        );
+    }
 }
 
 fn dump(path: &std::path::Path) {

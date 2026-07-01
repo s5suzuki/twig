@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,6 +10,7 @@ use git2::Oid;
 use crate::config::Config;
 use crate::keys::{Chord, Keymap};
 use crate::repo::{self, DiffMode, DiffRow, FileDiff, Graph, RepoNode, StatusEntry};
+use crate::search;
 
 pub const LIST_PAGE: usize = 10;
 
@@ -17,6 +19,98 @@ pub enum Tab {
     Graph,
     Diff,
     Editor,
+    Search,
+}
+
+pub struct FindMatch {
+    pub row: usize,
+    pub line_no: u32,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Default)]
+pub struct FindBar {
+    pub open: bool,
+    pub query: String,
+    pub replace: String,
+    pub regex: bool,
+    pub case_sensitive: bool,
+    pub error: Option<String>,
+    pub focus_request: bool,
+    pub matches: Vec<FindMatch>,
+    pub current: usize,
+    sig: Option<(String, bool, bool)>,
+}
+
+impl FindBar {
+    pub fn invalidate(&mut self) {
+        self.sig = None;
+    }
+
+    pub fn recompute(&mut self, diff: &FileDiff) {
+        let sig = (self.query.clone(), self.regex, self.case_sensitive);
+        if self.sig.as_ref() == Some(&sig) {
+            return;
+        }
+        self.sig = Some(sig);
+        self.matches.clear();
+        self.error = None;
+        if self.query.is_empty() {
+            self.current = 0;
+            return;
+        }
+        let matcher = match search::Matcher::new(&self.query, self.regex, self.case_sensitive) {
+            Ok(m) => m,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        for (row, r) in diff.rows.iter().enumerate() {
+            if let DiffRow::Line {
+                right: Some(text),
+                new_no,
+                ..
+            } = r
+            {
+                for (start, end) in search::line_ranges(&matcher, text) {
+                    self.matches.push(FindMatch {
+                        row,
+                        line_no: new_no.unwrap_or(0),
+                        start,
+                        end,
+                    });
+                }
+            }
+        }
+        if self.current >= self.matches.len() {
+            self.current = 0;
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct SearchState {
+    pub query: String,
+    pub replace: String,
+    pub regex: bool,
+    pub case_sensitive: bool,
+    pub error: Option<String>,
+    pub results: Vec<search::FileHit>,
+    pub selected: HashSet<(String, u32)>,
+    pub searched: bool,
+    pub focus_request: bool,
+}
+
+impl SearchState {
+    pub fn selected_count(&self) -> usize {
+        self.results
+            .iter()
+            .flat_map(|f| f.lines.iter().map(move |l| (f.path.clone(), l.line_no)))
+            .filter(|k| self.selected.contains(k))
+            .count()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -107,6 +201,7 @@ pub struct App {
     pub selected_file: Option<(String, bool)>,
     pub selected_commit: Option<(Oid, String)>,
     pub commit_files: Vec<repo::CommitFile>,
+    pub commit_detail: String,
     pub selected_commit_file: Option<String>,
     pub diff: FileDiff,
     pub diff_cursor: usize,
@@ -116,6 +211,10 @@ pub struct App {
     pub diff_visible: Option<(usize, usize)>,
     pub commit_msg: String,
     pub active_tab: Tab,
+
+    pub find: FindBar,
+    pub search: SearchState,
+    pub search_confirm: bool,
 
     pub term: Option<crate::term::Term>,
     pub nvim_socket: PathBuf,
@@ -172,6 +271,7 @@ impl App {
             selected_file: None,
             selected_commit: None,
             commit_files: Vec::new(),
+            commit_detail: String::new(),
             selected_commit_file: None,
             diff: empty_diff(),
             diff_cursor: 0,
@@ -181,6 +281,9 @@ impl App {
             diff_visible: None,
             commit_msg: String::new(),
             active_tab: Tab::Graph,
+            find: FindBar::default(),
+            search: SearchState::default(),
+            search_confirm: false,
             term: None,
             nvim_socket: std::env::temp_dir()
                 .join(format!("twig-nvim-{}.sock", std::process::id())),
@@ -236,6 +339,7 @@ impl App {
     fn clear_commit_selection(&mut self) {
         self.selected_commit = None;
         self.commit_files.clear();
+        self.commit_detail.clear();
         self.selected_commit_file = None;
     }
 
@@ -325,8 +429,224 @@ impl App {
         }
         self.selected_file = Some((file, staged));
         self.clear_commit_selection();
+        self.find.invalidate();
 
         self.clamp_diff_nav();
+    }
+
+    pub fn open_find(&mut self) {
+        if self.selected_file.is_none() {
+            return;
+        }
+        self.active_tab = Tab::Diff;
+        self.focus = Pane::RightTab;
+        self.find.open = true;
+        self.find.focus_request = true;
+    }
+
+    pub fn close_find(&mut self) {
+        self.find.open = false;
+    }
+
+    pub fn toggle_find(&mut self) {
+        if self.find.open {
+            self.close_find();
+        } else {
+            self.open_find();
+        }
+    }
+
+    fn scroll_to_find(&mut self) {
+        if let Some(m) = self.find.matches.get(self.find.current) {
+            self.diff_cursor = m.row.min(self.diff_last_row());
+            self.diff_scroll_pending = true;
+        }
+    }
+
+    pub fn find_next(&mut self) {
+        if self.find.matches.is_empty() {
+            return;
+        }
+        self.find.current = (self.find.current + 1) % self.find.matches.len();
+        self.scroll_to_find();
+    }
+
+    pub fn find_prev(&mut self) {
+        if self.find.matches.is_empty() {
+            return;
+        }
+        let n = self.find.matches.len();
+        self.find.current = (self.find.current + n - 1) % n;
+        self.scroll_to_find();
+    }
+
+    fn find_matcher(&mut self) -> Option<search::Matcher> {
+        match search::Matcher::new(&self.find.query, self.find.regex, self.find.case_sensitive) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                self.find.error = Some(e);
+                None
+            }
+        }
+    }
+
+    pub fn find_replace_current(&mut self) {
+        let Some((path, staged)) = self.selected_file.clone() else {
+            return;
+        };
+        if staged {
+            return;
+        }
+        let Some(m) = self
+            .find
+            .matches
+            .get(self.find.current)
+            .map(|m| (m.line_no, m.start))
+        else {
+            return;
+        };
+        let Some(matcher) = self.find_matcher() else {
+            return;
+        };
+        let replacement = self.find.replace.clone();
+        let abs = self.selected.join(&path);
+        let Ok(text) = std::fs::read_to_string(&abs) else {
+            return;
+        };
+        if let Some(new) = search::replace_one_in_text(&matcher, &text, m.0, m.1, &replacement)
+            && std::fs::write(&abs, new).is_ok()
+        {
+            self.find.invalidate();
+            self.after_index_change();
+        }
+    }
+
+    pub fn find_replace_all(&mut self) {
+        let Some((path, staged)) = self.selected_file.clone() else {
+            return;
+        };
+        if staged {
+            return;
+        }
+        let Some(matcher) = self.find_matcher() else {
+            return;
+        };
+        let replacement = self.find.replace.clone();
+        let abs = self.selected.join(&path);
+        let Ok(text) = std::fs::read_to_string(&abs) else {
+            return;
+        };
+        let (new, n) = search::replace_all_in_text(&matcher, &text, &replacement);
+        if n > 0 && new != text && std::fs::write(&abs, new).is_ok() {
+            self.find.invalidate();
+            self.after_index_change();
+        }
+    }
+
+    pub fn search_run(&mut self) {
+        self.search.error = None;
+        self.search.results.clear();
+        self.search.selected.clear();
+        self.search.searched = true;
+        let matcher =
+            match search::Matcher::new(&self.search.query, self.search.regex, self.search.case_sensitive)
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    self.search.error = Some(e);
+                    return;
+                }
+            };
+        let hits = search::search_repo(&self.selected, &matcher);
+        for f in &hits {
+            for l in &f.lines {
+                self.search.selected.insert((f.path.clone(), l.line_no));
+            }
+        }
+        self.search.results = hits;
+    }
+
+    pub fn search_apply(&mut self) {
+        self.search_confirm = false;
+        let matcher =
+            match search::Matcher::new(&self.search.query, self.search.regex, self.search.case_sensitive)
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    self.search.error = Some(e);
+                    return;
+                }
+            };
+        let replacement = self.search.replace.clone();
+        let mut errs = Vec::new();
+        for f in &self.search.results {
+            let lines: Vec<u32> = f
+                .lines
+                .iter()
+                .map(|l| l.line_no)
+                .filter(|ln| self.search.selected.contains(&(f.path.clone(), *ln)))
+                .collect();
+            if lines.is_empty() {
+                continue;
+            }
+            let abs = self.selected.join(&f.path);
+            let Ok(mut text) = std::fs::read_to_string(&abs) else {
+                continue;
+            };
+            for ln in lines {
+                if let Some(new) = search::replace_line_in_text(&matcher, &text, ln, &replacement) {
+                    text = new;
+                }
+            }
+            if let Err(e) = std::fs::write(&abs, text) {
+                errs.push(format!("{}: {e}", f.path));
+            }
+        }
+        if !errs.is_empty() {
+            self.error = Some(errs.join("; "));
+        }
+        self.search_run();
+        self.reload();
+    }
+
+    pub fn search_toggle_line(&mut self, path: &str, line_no: u32) {
+        let key = (path.to_string(), line_no);
+        if !self.search.selected.remove(&key) {
+            self.search.selected.insert(key);
+        }
+    }
+
+    pub fn search_file_all_selected(&self, f: &search::FileHit) -> bool {
+        f.lines
+            .iter()
+            .all(|l| self.search.selected.contains(&(f.path.clone(), l.line_no)))
+    }
+
+    pub fn search_toggle_file(&mut self, idx: usize) {
+        let Some(f) = self.search.results.get(idx) else {
+            return;
+        };
+        let all = self.search_file_all_selected(f);
+        let keys: Vec<(String, u32)> =
+            f.lines.iter().map(|l| (f.path.clone(), l.line_no)).collect();
+        for k in keys {
+            if all {
+                self.search.selected.remove(&k);
+            } else {
+                self.search.selected.insert(k);
+            }
+        }
+    }
+
+    pub fn search_select_all(&mut self, select: bool) {
+        self.search.selected.clear();
+        if select {
+            for f in &self.search.results {
+                for l in &f.lines {
+                    self.search.selected.insert((f.path.clone(), l.line_no));
+                }
+            }
+        }
     }
 
     fn reset_diff_nav(&mut self) {
@@ -471,6 +791,7 @@ impl App {
         let short = oid.to_string();
         let label = short[..7.min(short.len())].to_string();
         self.commit_files = repo::commit_files(&self.selected, oid).unwrap_or_default();
+        self.commit_detail = repo::commit_message(&self.selected, oid).unwrap_or_default();
         self.selected_file = None;
         self.selected_commit = Some((oid, label));
         self.selected_commit_file = None;

@@ -7,6 +7,7 @@ A lightweight Git GUI client for Linux, inspired by VS Code's *Git Graph* extens
 - **Commit graph** 
 - **Two-stage staging** 
 - **Side-by-side diff** 
+- **Regex search & replace**
 - **Per-submodule scoping**
 - **Neovim integration** 
 - **Embedded terminal / Neovim**
@@ -39,13 +40,15 @@ twig <repo path>
 | `Alt+l` | `focus-right` | Move focus to the pane on the right |
 | `Alt+k` | `focus-up` | Move focus up |
 | `Alt+j` | `focus-down` | Move focus down (to the terminal) |
-| `Tab` | `cycle-tab` | Cycle the right-hand tab (Graph → Diff → Editor) |
+| `Tab` | `cycle-tab` | Cycle the right-hand tab (Graph → Diff → Search → Editor) |
 | `` Ctrl+` `` | `toggle-shell` | Toggle the bottom terminal |
+| `Ctrl+Shift+f` | `open-search` | Open the Search tab (repository-wide search & replace) |
 
 **Diff** (right pane, Diff tab)
 
 | Key | Action | Description |
 | --- | --- | --- |
+| `/` | `diff-find` | Toggle the in-file find & replace bar |
 | `j` | `diff-down` | Move cursor down one line |
 | `k` | `diff-up` | Move cursor up one line |
 | `gg` | `diff-top` | Jump to the first line |
@@ -89,6 +92,18 @@ twig <repo path>
 | `h` | `sidebar-collapse` | Collapse a node, or step out |
 | `Ctrl+d` | `sidebar-half-page-down` | Move cursor half a page down |
 | `Ctrl+u` | `sidebar-half-page-up` | Move cursor half a page up |
+
+**Search & replace bars** (not rebindable)
+
+Inside the Diff find bar (`/`) and the Search tab, the input fields use fixed keys:
+
+| Key | Description |
+| --- | --- |
+| `Enter` | Go to the next match (Diff bar) / run the search (Search tab) |
+| `Shift+Enter` | Go to the previous match (Diff bar) |
+| `Esc` | Unfocus the input; press `/` again to close the Diff bar |
+
+Both bars offer `Aa` (match case) and `.*` (regex, with `$1` capture references in the replacement) toggles. Replacements are written to the working tree — the Search tab confirms before applying.
 
 ### Rebinding
 

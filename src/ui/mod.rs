@@ -1,5 +1,6 @@
 mod diff_view;
 mod graph_view;
+mod search_view;
 mod sidebar;
 
 use std::collections::BTreeMap;
@@ -151,6 +152,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                     "\u{f0f6}  Diff".to_string()
                 };
                 ui.selectable_value(&mut app.active_tab, Tab::Diff, diff_label);
+                ui.selectable_value(&mut app.active_tab, Tab::Search, "\u{f002}  Search");
                 ui.selectable_value(&mut app.active_tab, Tab::Editor, "\u{f040}  Editor");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("\u{f013}").on_hover_text("Settings").clicked() {
@@ -182,6 +184,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                                 ui,
                                 sel,
                                 &app.commit_files,
+                                &app.commit_detail,
                                 sel_file.as_deref(),
                                 show_author,
                                 show_date,
@@ -270,6 +273,24 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         ui.separator();
                     }
 
+                    if file_sel.is_some() && app.find.open {
+                        find_bar(app, ui);
+                    }
+
+                    let find_render = if file_sel.is_some() && app.find.open {
+                        app.find.recompute(&app.diff);
+                        let mut fr = diff_view::FindRender::default();
+                        for (i, m) in app.find.matches.iter().enumerate() {
+                            fr.rows
+                                .entry(m.row)
+                                .or_default()
+                                .push((m.start, m.end, i == app.find.current));
+                        }
+                        Some(fr)
+                    } else {
+                        None
+                    };
+
                     let hunk_ctl = if conflict {
                         None
                     } else {
@@ -280,7 +301,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         sel: app.diff_highlight(),
                         scroll_to_cursor: app.diff_scroll_pending,
                     });
-                    let resp = diff_view::draw(&app.diff, ui, hunk_ctl, nav.as_ref());
+                    let resp = diff_view::draw(&app.diff, ui, hunk_ctl, nav.as_ref(), find_render.as_ref());
                     app.diff_scrolled_prev = app.diff_scroll_pending;
                     app.diff_scroll_pending = false;
                     if nav.is_some() {
@@ -319,6 +340,13 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         && t.ui(ui, active) {
                             app.focus = Pane::RightTab;
                         }
+                }
+                Tab::Search => {
+                    if let Some(search_view::SearchAction::OpenEditor(p)) =
+                        search_view::draw(app, ui)
+                    {
+                        app.open_in_editor(&p);
+                    }
                 }
             }
             focus_on_click(app, ui, Pane::RightTab);
@@ -360,6 +388,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     ref_prompt_modal(app, ui);
     delete_ref_modal(app, ui);
     reset_modal(app, ui);
+    search_confirm_modal(app, ui);
 
     draw_settings(app, ui.ctx());
 }
@@ -454,6 +483,135 @@ fn delete_ref_modal(app: &mut App, ui: &mut egui::Ui) {
         }
     } else if cancel || resp.should_close() {
         app.confirm_delete = None;
+    }
+}
+
+fn find_bar(app: &mut App, ui: &mut egui::Ui) {
+    let staged = app.selected_file.as_ref().map(|(_, s)| *s).unwrap_or(false);
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        let mut go_next = false;
+        let mut go_prev = false;
+        ui.horizontal(|ui| {
+            ui.label("\u{f002}");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut app.find.query)
+                    .hint_text("Find")
+                    .desired_width(220.0),
+            );
+            if app.find.focus_request {
+                resp.request_focus();
+                app.find.focus_request = false;
+            }
+            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if ui.input(|i| i.modifiers.shift) {
+                    go_prev = true;
+                } else {
+                    go_next = true;
+                }
+                app.find.focus_request = true;
+            }
+            if ui
+                .selectable_label(app.find.case_sensitive, "Aa")
+                .on_hover_text("Match case")
+                .clicked()
+            {
+                app.find.case_sensitive = !app.find.case_sensitive;
+            }
+            if ui
+                .selectable_label(app.find.regex, ".*")
+                .on_hover_text("Regular expression")
+                .clicked()
+            {
+                app.find.regex = !app.find.regex;
+            }
+            let status = if let Some(e) = &app.find.error {
+                e.clone()
+            } else if app.find.query.is_empty() {
+                String::new()
+            } else if app.find.matches.is_empty() {
+                "No results".to_string()
+            } else {
+                format!("{}/{}", app.find.current + 1, app.find.matches.len())
+            };
+            ui.add(egui::Label::new(status).truncate());
+            if ui.button("\u{f062}").on_hover_text("Previous (Shift+Enter)").clicked() {
+                go_prev = true;
+            }
+            if ui.button("\u{f063}").on_hover_text("Next (Enter)").clicked() {
+                go_next = true;
+            }
+            if ui.button("\u{f00d}").on_hover_text("Close (Esc)").clicked() {
+                app.close_find();
+            }
+        });
+        if !staged {
+            ui.horizontal(|ui| {
+                ui.label("\u{f3a5}");
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.find.replace)
+                        .hint_text("Replace")
+                        .desired_width(220.0),
+                );
+                if ui.button("Replace").clicked() {
+                    app.find_replace_current();
+                }
+                if ui
+                    .button(format!("Replace all ({})", app.find.matches.len()))
+                    .clicked()
+                {
+                    app.find_replace_all();
+                }
+            });
+        }
+        if go_prev {
+            app.find_prev();
+        }
+        if go_next {
+            app.find_next();
+        }
+    });
+    if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        app.close_find();
+    }
+}
+
+fn search_confirm_modal(app: &mut App, ui: &mut egui::Ui) {
+    if !app.search_confirm {
+        return;
+    }
+    let matches = app.search.selected_count();
+    let files = app
+        .search
+        .results
+        .iter()
+        .filter(|f| {
+            f.lines
+                .iter()
+                .any(|l| app.search.selected.contains(&(f.path.clone(), l.line_no)))
+        })
+        .count();
+    let resp = egui::Modal::new(egui::Id::new("search_confirm")).show(ui.ctx(), |ui| {
+        ui.set_width(380.0);
+        ui.heading("Replace in working tree");
+        ui.add_space(6.0);
+        ui.label(format!(
+            "Replace {matches} match(es) across {files} file(s). This edits files on disk and cannot be undone from the UI."
+        ));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let cancel = ui.button("Cancel").clicked();
+            let apply = ui
+                .add(egui::Button::new("Replace").fill(egui::Color32::from_rgb(0x2e, 0x6b, 0x3a)))
+                .clicked();
+            (apply, cancel)
+        })
+        .inner
+    });
+    let (apply, cancel) = resp.inner;
+    if apply {
+        app.search_apply();
+    } else if cancel || resp.should_close() {
+        app.search_confirm = false;
     }
 }
 
@@ -814,11 +972,17 @@ fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
             Action::CycleTab => {
                 app.active_tab = match app.active_tab {
                     Tab::Graph => Tab::Diff,
-                    Tab::Diff => Tab::Editor,
+                    Tab::Diff => Tab::Search,
+                    Tab::Search => Tab::Editor,
                     Tab::Editor => Tab::Graph,
                 };
             }
             Action::ToggleShell => app.toggle_shell(),
+            Action::OpenSearch => {
+                app.active_tab = Tab::Search;
+                app.focus = Pane::RightTab;
+                app.search.focus_request = true;
+            }
             _ => {}
         }
     }
@@ -849,6 +1013,7 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
         .poll(ui, Context::Diff, &mut app.pending_prefix, |_| true);
     for a in actions {
         match a {
+            Action::DiffFind => app.toggle_find(),
             Action::DiffDown => app.move_diff_cursor(1),
             Action::DiffUp => app.move_diff_cursor(-1),
             Action::DiffTop => app.set_diff_cursor(0),

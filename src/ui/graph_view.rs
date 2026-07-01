@@ -1,4 +1,4 @@
-use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, UiBuilder, pos2, vec2};
 use git2::Oid;
 
 use crate::repo::{CommitFile, Graph, RefKind, RefLabel, ResetMode, Segment, StatusKind};
@@ -12,6 +12,7 @@ const NODE_R: f32 = 4.0;
 const PAD_LEFT: f32 = 8.0;
 const TEXT_GAP: f32 = 10.0;
 const FILE_PAD: f32 = 4.0;
+const MSG_PAD: f32 = 6.0;
 
 const PALETTE: [Color32; 8] = [
     Color32::from_rgb(0x4f, 0xc1, 0xff),
@@ -72,6 +73,7 @@ pub fn draw(
     ui: &mut egui::Ui,
     selected: Option<Oid>,
     files: &[CommitFile],
+    message: &str,
     sel_file: Option<&str>,
     show_author: bool,
     show_date: bool,
@@ -82,15 +84,37 @@ pub fn draw(
     }
 
     let expanded_row = selected.and_then(|s| graph.rows.iter().position(|r| r.id == s));
-    let file_block_h = if expanded_row.is_some() && !files.is_empty() {
+
+    let gutter = PAD_LEFT + (graph.max_col as f32 + 1.0) * COL_W;
+    let width = ui.available_width().max(gutter + 200.0);
+
+    let msg_font = FontId::monospace(12.0);
+    let msg_wrap = (width - gutter - MSG_PAD * 2.0).max(80.0);
+    let msg_text = message.trim_end();
+    let msg_galley = if expanded_row.is_some() && !msg_text.is_empty() {
+        Some(ui.ctx().fonts_mut(|f| {
+            f.layout(
+                msg_text.to_string(),
+                msg_font,
+                ui.visuals().text_color(),
+                msg_wrap,
+            )
+        }))
+    } else {
+        None
+    };
+    let msg_h = msg_galley
+        .as_ref()
+        .map(|g| g.size().y + MSG_PAD * 2.0)
+        .unwrap_or(0.0);
+    let files_h = if expanded_row.is_some() && !files.is_empty() {
         files.len() as f32 * FILE_H + FILE_PAD
     } else {
         0.0
     };
+    let file_block_h = msg_h + files_h;
 
-    let gutter = PAD_LEFT + (graph.max_col as f32 + 1.0) * COL_W;
     let total_h = graph.rows.len() as f32 * ROW_H + file_block_h;
-    let width = ui.available_width().max(gutter + 200.0);
 
     let (rect, resp) = ui.allocate_exact_size(vec2(width, total_h), Sense::click());
     let painter = ui.painter_at(rect);
@@ -100,6 +124,7 @@ pub fn draw(
     let text_color = ui.visuals().text_color();
     let sel_bg = ui.visuals().selection.bg_fill;
     let hover_bg = ui.visuals().widgets.hovered.weak_bg_fill;
+    let detail_bg = ui.visuals().faint_bg_color;
     let hover_pos = resp.hover_pos();
 
     let mut commit_hits: Vec<(f32, f32, Oid)> = Vec::new();
@@ -191,8 +216,26 @@ pub fn draw(
         commit_hits.push((y_top, y_top + ROW_H, row.id));
 
         if is_expanded {
+            let detail_top = y_top + ROW_H;
+            let detail_rect = Rect::from_min_max(
+                pos2(rect.left(), detail_top),
+                pos2(rect.right(), detail_top + file_block_h),
+            );
+            painter.rect_filled(detail_rect, 0.0, detail_bg);
+
+            if let Some(galley) = &msg_galley {
+                let msg_rect = Rect::from_min_size(
+                    pos2(rect.left() + gutter, detail_top + MSG_PAD),
+                    vec2(msg_wrap, galley.size().y),
+                );
+                ui.scope_builder(UiBuilder::new().max_rect(msg_rect), |ui| {
+                    ui.add(egui::Label::new(galley.clone()).selectable(true));
+                });
+            }
+
+            let files_top = detail_top + msg_h;
             for (k, f) in files.iter().enumerate() {
-                let fy = y_top + ROW_H + k as f32 * FILE_H;
+                let fy = files_top + k as f32 * FILE_H;
                 let fr = Rect::from_min_max(pos2(rect.left(), fy), pos2(rect.right(), fy + FILE_H));
                 if sel_file == Some(f.path.as_str()) {
                     painter.rect_filled(fr, 0.0, sel_bg);

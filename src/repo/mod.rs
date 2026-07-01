@@ -6,7 +6,7 @@ mod status;
 
 pub use diff::{
     CommitFile, DiffMode, DiffRow, FileDiff, LineKind, apply_partial, commit_diff,
-    commit_file_diff, commit_files, file_diff,
+    commit_file_diff, commit_files, commit_message, file_diff,
 };
 pub use discovery::{RepoNode, discover};
 pub use graph::{Graph, RefKind, RefLabel, Segment, build as build_graph};

@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use egui::{
     Align, Color32, FontId, Label, Layout, Rect, RichText, ScrollArea, Sense, Stroke, StrokeKind,
-    pos2, vec2,
+    TextFormat, pos2, text::LayoutJob, vec2,
 };
 
 use crate::repo::{DiffRow, FileDiff, LineKind};
@@ -33,6 +35,11 @@ pub struct DiffNav {
 }
 
 #[derive(Default)]
+pub struct FindRender {
+    pub rows: HashMap<usize, Vec<(usize, usize, bool)>>,
+}
+
+#[derive(Default)]
 pub struct DiffResponse {
     pub hunk_toggle: Option<usize>,
     pub drag_select: Option<(usize, usize)>,
@@ -44,6 +51,7 @@ pub fn draw(
     ui: &mut egui::Ui,
     hunk_ctl: Option<bool>,
     nav: Option<&DiffNav>,
+    find: Option<&FindRender>,
 ) -> DiffResponse {
     let mut resp = DiffResponse::default();
     if let Some(note) = &diff.note {
@@ -70,7 +78,7 @@ pub fn draw(
                     if let Some(t) = pending {
                         sa = sa.vertical_scroll_offset(t);
                     }
-                    sa.show(ui, |ui| render_rows(diff, ui, hunk_ctl, nav, &mut resp))
+                    sa.show(ui, |ui| render_rows(diff, ui, hunk_ctl, nav, find, &mut resp))
                 },
             )
             .inner;
@@ -92,6 +100,7 @@ fn render_rows(
     ui: &mut egui::Ui,
     hunk_ctl: Option<bool>,
     nav: Option<&DiffNav>,
+    find: Option<&FindRender>,
     resp: &mut DiffResponse,
 ) {
     ui.spacing_mut().item_spacing.y = 1.0;
@@ -99,6 +108,18 @@ fn render_rows(
     let sel_fill = ui.visuals().selection.bg_fill;
     let sel_overlay = Color32::from_rgba_unmultiplied(sel_fill.r(), sel_fill.g(), sel_fill.b(), 60);
     let cursor_bar = ui.visuals().selection.stroke.color;
+    let dark_mode = ui.visuals().dark_mode;
+    let hl_color = if dark_mode {
+        Color32::from_rgb(0x5c, 0x51, 0x1e)
+    } else {
+        Color32::from_rgb(0xff, 0xe4, 0x82)
+    };
+    let cur_color = if dark_mode {
+        Color32::from_rgb(0xc0, 0x76, 0x1a)
+    } else {
+        Color32::from_rgb(0xff, 0xb3, 0x4d)
+    };
+    let empty_hl: Vec<(usize, usize, bool)> = Vec::new();
     let clip = ui.clip_rect();
     let mut line_rects: Vec<(usize, Rect)> = Vec::new();
     let mut visible: Option<(usize, usize)> = None;
@@ -171,12 +192,15 @@ fn render_rows(
                     LineKind::Removed => (Some(del_bg(dark)), None),
                     LineKind::Changed => (Some(del_bg(dark)), Some(add_bg(dark))),
                 };
+                let hl = find
+                    .and_then(|f| f.rows.get(&i))
+                    .unwrap_or(&empty_hl);
                 let row_resp = ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = COL_GAP;
                     lineno_cell(ui, *old_no, lineno_w);
-                    text_cell(ui, left.as_deref(), text_w, left_bg);
+                    text_cell(ui, left.as_deref(), text_w, left_bg, &[], hl_color, cur_color);
                     lineno_cell(ui, *new_no, lineno_w);
-                    text_cell(ui, right.as_deref(), text_w, right_bg);
+                    text_cell(ui, right.as_deref(), text_w, right_bg, hl, hl_color, cur_color);
                 });
                 let rrect = row_resp.response.rect;
                 if let Some(nav) = nav {
@@ -286,11 +310,43 @@ fn lineno_cell(ui: &mut egui::Ui, no: Option<u32>, w: f32) {
     });
 }
 
-fn text_cell(ui: &mut egui::Ui, text: Option<&str>, w: f32, bg: Option<Color32>) {
+fn text_cell(
+    ui: &mut egui::Ui,
+    text: Option<&str>,
+    w: f32,
+    bg: Option<Color32>,
+    hl: &[(usize, usize, bool)],
+    hl_color: Color32,
+    cur_color: Color32,
+) {
     let text = text.unwrap_or("");
     let font = FontId::monospace(12.0);
     let color = ui.visuals().text_color();
-    let galley = ui.painter().layout(text.to_owned(), font.clone(), color, w);
+    let galley = if hl.is_empty() {
+        ui.painter().layout(text.to_owned(), font.clone(), color, w)
+    } else {
+        let mut job = LayoutJob::default();
+        job.wrap.max_width = w;
+        let mut pos = 0usize;
+        for &(s, e, is_cur) in hl {
+            let s = s.min(text.len());
+            let e = e.min(text.len());
+            if s < pos || e < s {
+                continue;
+            }
+            if pos < s {
+                job.append(&text[pos..s], 0.0, TextFormat::simple(font.clone(), color));
+            }
+            let mut f = TextFormat::simple(font.clone(), color);
+            f.background = if is_cur { cur_color } else { hl_color };
+            job.append(&text[s..e], 0.0, f);
+            pos = e;
+        }
+        if pos < text.len() {
+            job.append(&text[pos..], 0.0, TextFormat::simple(font.clone(), color));
+        }
+        ui.painter().layout_job(job)
+    };
     let row_h = ui.ctx().fonts_mut(|f| f.row_height(&font));
     let h = galley.size().y.max(row_h);
     let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
