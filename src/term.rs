@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -61,21 +62,35 @@ pub struct Term {
 }
 
 impl Term {
-    pub fn spawn(socket: &Path, cwd: &Path, ctx: &egui::Context) -> Result<Term, String> {
+    pub fn spawn(
+        socket: &Path,
+        cwd: &Path,
+        ctx: &egui::Context,
+        repaint_gate: Arc<AtomicBool>,
+    ) -> Result<Term, String> {
         let _ = std::fs::remove_file(socket);
 
         let mut cmd = CommandBuilder::new("nvim");
         cmd.args(["--listen", &socket.to_string_lossy()]);
-        Self::spawn_cmd(cmd, cwd, ctx)
+        Self::spawn_cmd(cmd, cwd, ctx, repaint_gate)
     }
 
-    pub fn spawn_shell(cwd: &Path, ctx: &egui::Context) -> Result<Term, String> {
+    pub fn spawn_shell(
+        cwd: &Path,
+        ctx: &egui::Context,
+        repaint_gate: Arc<AtomicBool>,
+    ) -> Result<Term, String> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
         let cmd = CommandBuilder::new(shell);
-        Self::spawn_cmd(cmd, cwd, ctx)
+        Self::spawn_cmd(cmd, cwd, ctx, repaint_gate)
     }
 
-    fn spawn_cmd(mut cmd: CommandBuilder, cwd: &Path, ctx: &egui::Context) -> Result<Term, String> {
+    fn spawn_cmd(
+        mut cmd: CommandBuilder,
+        cwd: &Path,
+        ctx: &egui::Context,
+        repaint_gate: Arc<AtomicBool>,
+    ) -> Result<Term, String> {
         let pty = native_pty_system();
         let pair = pty
             .openpty(PtySize {
@@ -113,11 +128,15 @@ impl Term {
                         if tx.send(buf[..n].to_vec()).is_err() {
                             break;
                         }
-                        ctx.request_repaint();
+                        if repaint_gate.load(Ordering::Relaxed) {
+                            ctx.request_repaint();
+                        }
                     }
                 }
             }
-            ctx.request_repaint();
+            if repaint_gate.load(Ordering::Relaxed) {
+                ctx.request_repaint();
+            }
         });
 
         let proxy_out = Arc::new(Mutex::new(Vec::new()));

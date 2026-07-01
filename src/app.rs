@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use git2::Oid;
 
@@ -110,6 +112,9 @@ pub struct App {
     watch_root: PathBuf,
     watcher: Option<crate::watch::WorktreeWatcher>,
     watcher_started: bool,
+
+    repaint_gate: Arc<AtomicBool>,
+    was_hidden: bool,
 }
 
 impl App {
@@ -158,6 +163,8 @@ impl App {
             watch_root: path.clone(),
             watcher: None,
             watcher_started: false,
+            repaint_gate: Arc::new(AtomicBool::new(true)),
+            was_hidden: false,
         };
 
         match repo::discover(&path) {
@@ -192,7 +199,7 @@ impl App {
             return;
         }
         self.watcher_started = true;
-        match crate::watch::WorktreeWatcher::new(&self.watch_root, ctx) {
+        match crate::watch::WorktreeWatcher::new(&self.watch_root, ctx, self.repaint_gate()) {
             Ok(w) => self.watcher = Some(w),
             Err(e) => self.error = Some(e),
         }
@@ -200,6 +207,26 @@ impl App {
 
     pub fn take_external_change(&mut self) -> bool {
         self.watcher.as_ref().is_some_and(|w| w.take_dirty())
+    }
+
+    pub fn update_visibility(&mut self, ctx: &egui::Context) {
+        let (occluded, minimized, focused) = ctx.input(|i| {
+            let vp = i.viewport();
+            (vp.occluded, vp.minimized, vp.focused)
+        });
+        let hidden =
+            focused == Some(false) || occluded == Some(true) || minimized == Some(true);
+
+        self.repaint_gate.store(!hidden, Ordering::Relaxed);
+
+        if self.was_hidden && !hidden {
+            ctx.request_repaint();
+        }
+        self.was_hidden = hidden;
+    }
+
+    pub fn repaint_gate(&self) -> Arc<AtomicBool> {
+        self.repaint_gate.clone()
     }
 
     pub fn refresh_from_disk(&mut self) {
@@ -496,7 +523,7 @@ impl App {
             self.shell = None;
         }
         if self.shell.is_none() {
-            match crate::term::Term::spawn_shell(&self.watch_root, ctx) {
+            match crate::term::Term::spawn_shell(&self.watch_root, ctx, self.repaint_gate()) {
                 Ok(t) => self.shell = Some(t),
                 Err(e) => self.error = Some(e),
             }

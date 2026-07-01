@@ -14,7 +14,11 @@ pub struct WorktreeWatcher {
 }
 
 impl WorktreeWatcher {
-    pub fn new(root: &Path, ctx: &egui::Context) -> Result<Self, String> {
+    pub fn new(
+        root: &Path,
+        ctx: &egui::Context,
+        repaint_gate: Arc<AtomicBool>,
+    ) -> Result<Self, String> {
         let dirty = Arc::new(AtomicBool::new(false));
         let dirty_cb = dirty.clone();
         let ctx = ctx.clone();
@@ -23,7 +27,9 @@ impl WorktreeWatcher {
             let Ok(events) = res else { return };
             if events.iter().any(|e| !is_ignored(&e.path)) {
                 dirty_cb.store(true, Ordering::Relaxed);
-                ctx.request_repaint();
+                if repaint_gate.load(Ordering::Relaxed) {
+                    ctx.request_repaint();
+                }
             }
         })
         .map_err(|e| format!("Failed to initialize file watcher: {e}"))?;

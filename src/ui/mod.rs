@@ -24,6 +24,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     diff_keys(app, ui);
 
     app.ensure_watcher(ui.ctx());
+    app.update_visibility(ui.ctx());
     if app.take_external_change() {
         app.refresh_from_disk();
     }
@@ -292,7 +293,12 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         app.term = None;
                     }
                     if app.term.is_none() {
-                        match crate::term::Term::spawn(&app.nvim_socket, &app.selected, ui.ctx()) {
+                        match crate::term::Term::spawn(
+                            &app.nvim_socket,
+                            &app.selected,
+                            ui.ctx(),
+                            app.repaint_gate(),
+                        ) {
                             Ok(t) => app.term = Some(t),
                             Err(e) => app.error = Some(e),
                         }
