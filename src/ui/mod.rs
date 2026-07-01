@@ -127,6 +127,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
             .resizable(true)
             .show(ui, |ui| {
                 app.ensure_shell(ui.ctx());
+                app.flush_pending_shell_cmd();
                 let active = app.focus == Pane::Terminal;
                 if let Some(t) = &mut app.shell
                     && t.ui(ui, active) {
@@ -194,6 +195,9 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         Some(graph_view::GraphAction::Commit(oid)) => app.select_commit(oid),
                         Some(graph_view::GraphAction::File(path)) => app.select_commit_file(path),
                         Some(graph_view::GraphAction::RebaseOnto(oid)) => app.rebase_onto(oid),
+                        Some(graph_view::GraphAction::InteractiveRebase(oid)) => {
+                            app.interactive_rebase(oid)
+                        }
                         Some(graph_view::GraphAction::CherryPick(oid)) => app.cherry_pick(oid),
                         Some(graph_view::GraphAction::Revert(oid)) => app.revert(oid),
                         Some(graph_view::GraphAction::Switch(name)) => app.switch_branch(name),
@@ -904,6 +908,19 @@ fn rebase_banner(app: &mut App, ui: &mut egui::Ui) {
     let Some(status) = &app.seq else {
         return;
     };
+    if matches!(status.kind, crate::app::SeqKind::RebaseInteractive) {
+        egui::Frame::group(ui.style())
+            .fill(egui::Color32::from_rgb(0x3a, 0x2a, 0x1a))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::from_rgb(0xff, 0xb8, 0x6c), "\u{e728}");
+                    ui.strong("Interactive rebase in progress");
+                });
+                ui.label("Drive it from the terminal below (continue / abort / edit there).");
+            });
+        return;
+    }
+
     let conflicts = status.conflicts.clone();
     let title = format!("{} in progress", status.kind.label());
     egui::Frame::group(ui.style())

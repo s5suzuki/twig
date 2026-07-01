@@ -43,6 +43,7 @@ pub enum GraphAction {
     Commit(Oid),
     File(String),
     RebaseOnto(Oid),
+    InteractiveRebase(Oid),
     CherryPick(Oid),
     Revert(Oid),
     Switch(String),
@@ -396,6 +397,13 @@ pub fn draw(
             .clicked()
         {
             menu_action = Some(GraphAction::RebaseOnto(oid));
+            ui.close();
+        }
+        if ui
+            .button("\u{e728}  Interactive rebase from here\u{2026}")
+            .clicked()
+        {
+            menu_action = Some(GraphAction::InteractiveRebase(oid));
             ui.close();
         }
         ui.menu_button("\u{f0e2}  Reset current branch to here", |ui| {

@@ -172,6 +172,11 @@ impl Term {
         matches!(self.child.try_wait(), Ok(None))
     }
 
+    pub fn feed(&mut self, bytes: &[u8]) {
+        let _ = self.writer.write_all(bytes);
+        let _ = self.writer.flush();
+    }
+
     fn resize(&mut self, cols: usize, rows: usize) {
         self.cols = cols;
         self.rows = rows;

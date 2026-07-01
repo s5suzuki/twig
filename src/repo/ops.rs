@@ -138,6 +138,7 @@ pub enum SeqOutcome {
 pub enum SeqState {
     None,
     Rebase,
+    RebaseInteractive,
     CherryPick,
     Revert,
     Merge,
@@ -145,9 +146,8 @@ pub enum SeqState {
 
 pub fn seq_state(repo_path: &Path) -> SeqState {
     match Repository::open(repo_path).map(|r| r.state()) {
-        Ok(RepositoryState::Rebase)
-        | Ok(RepositoryState::RebaseInteractive)
-        | Ok(RepositoryState::RebaseMerge) => SeqState::Rebase,
+        Ok(RepositoryState::RebaseInteractive) => SeqState::RebaseInteractive,
+        Ok(RepositoryState::Rebase) | Ok(RepositoryState::RebaseMerge) => SeqState::Rebase,
         Ok(RepositoryState::CherryPick) | Ok(RepositoryState::CherryPickSequence) => {
             SeqState::CherryPick
         }
@@ -162,6 +162,11 @@ pub fn seq_conflicts(repo_path: &Path) -> Vec<String> {
         Ok(index) => conflict_paths(&index),
         Err(_) => Vec::new(),
     }
+}
+
+pub fn commit_parent_count(repo_path: &Path, oid: Oid) -> Result<usize, git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    Ok(repo.find_commit(oid)?.parent_count())
 }
 
 pub fn rebase_onto(repo_path: &Path, onto_oid: Oid) -> Result<SeqOutcome, git2::Error> {

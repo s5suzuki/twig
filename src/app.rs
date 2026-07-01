@@ -132,6 +132,7 @@ pub enum Dir {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SeqKind {
     Rebase,
+    RebaseInteractive,
     CherryPick,
     Revert,
     Merge,
@@ -141,6 +142,7 @@ impl SeqKind {
     pub fn label(self) -> &'static str {
         match self {
             SeqKind::Rebase => "Rebase",
+            SeqKind::RebaseInteractive => "Interactive rebase",
             SeqKind::CherryPick => "Cherry-pick",
             SeqKind::Revert => "Revert",
             SeqKind::Merge => "Merge",
@@ -223,6 +225,7 @@ pub struct App {
 
     pub shell: Option<crate::term::Term>,
     pub shell_open: bool,
+    pending_shell_cmd: Option<String>,
 
     pub focus: Pane,
     pub changes_cursor: usize,
@@ -290,6 +293,7 @@ impl App {
             pending_open: None,
             shell: None,
             shell_open: true,
+            pending_shell_cmd: None,
             focus: Pane::Changes,
             changes_cursor: 0,
             sidebar_cursor: 0,
@@ -922,6 +926,35 @@ impl App {
         }
     }
 
+    pub fn flush_pending_shell_cmd(&mut self) {
+        let Some(cmd) = self.pending_shell_cmd.take() else {
+            return;
+        };
+        if let Some(sh) = &mut self.shell {
+            let mut line = cmd.into_bytes();
+            line.push(b'\n');
+            sh.feed(&line);
+        }
+    }
+
+    pub fn interactive_rebase(&mut self, oid: Oid) {
+        if self.busy_with_seq() {
+            return;
+        }
+        let base = match repo::commit_parent_count(&self.selected, oid) {
+            Ok(0) => "--root".to_string(),
+            Ok(_) => format!("{oid}^"),
+            Err(e) => {
+                self.error = Some(format!("rebase failed: {e}"));
+                return;
+            }
+        };
+        let dir = sh_quote(&self.selected.to_string_lossy());
+        self.pending_shell_cmd = Some(format!("git -C {dir} rebase -i {base}"));
+        self.shell_open = true;
+        self.focus = Pane::Terminal;
+    }
+
     pub fn discard_changes(&mut self, path: &str) {
         if let Err(e) = repo::discard(&self.selected, &[path.to_string()]) {
             self.error = Some(format!("Failed to discard changes: {e}"));
@@ -1012,6 +1045,7 @@ impl App {
         };
         let r = match kind {
             SeqKind::Rebase => repo::rebase_continue(&self.selected),
+            SeqKind::RebaseInteractive => return,
             SeqKind::CherryPick => repo::cherry_pick_continue(&self.selected),
             SeqKind::Revert => repo::revert_continue(&self.selected),
             SeqKind::Merge => repo::merge_continue(&self.selected),
@@ -1025,6 +1059,7 @@ impl App {
         };
         let r = match kind {
             SeqKind::Rebase => repo::rebase_abort(&self.selected),
+            SeqKind::RebaseInteractive => return,
             SeqKind::CherryPick => repo::cherry_pick_abort(&self.selected),
             SeqKind::Revert => repo::revert_abort(&self.selected),
             SeqKind::Merge => repo::merge_abort(&self.selected),
@@ -1315,6 +1350,7 @@ impl App {
                 return;
             }
             repo::SeqState::Rebase => SeqKind::Rebase,
+            repo::SeqState::RebaseInteractive => SeqKind::RebaseInteractive,
             repo::SeqState::CherryPick => SeqKind::CherryPick,
             repo::SeqState::Revert => SeqKind::Revert,
             repo::SeqState::Merge => SeqKind::Merge,
@@ -1352,6 +1388,10 @@ impl App {
             }
         }
     }
+}
+
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn empty_diff() -> FileDiff {
