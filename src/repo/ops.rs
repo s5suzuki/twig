@@ -590,6 +590,22 @@ pub fn push<F: FnMut(usize, usize)>(
     }
 }
 
+pub fn delete_remote_branch<F: FnMut(usize, usize)>(
+    repo_path: &Path,
+    remote: &str,
+    branch: &str,
+    progress: F,
+) -> Result<(), git2::Error> {
+    let refspec = format!(":refs/heads/{branch}");
+    push(repo_path, remote, std::slice::from_ref(&refspec), progress)?;
+
+    let repo = Repository::open(repo_path)?;
+    if let Ok(mut tracking) = repo.find_reference(&format!("refs/remotes/{remote}/{branch}")) {
+        tracking.delete()?;
+    }
+    Ok(())
+}
+
 pub fn pull<F: FnMut(usize, usize)>(
     repo_path: &Path,
     remote_name: &str,

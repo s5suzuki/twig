@@ -197,6 +197,9 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         Some(graph_view::GraphAction::CheckoutRemote(name)) => {
                             app.checkout_tracking(name)
                         }
+                        Some(graph_view::GraphAction::DeleteRemoteBranch(name)) => {
+                            app.confirm_delete = Some(crate::app::DeleteTarget::RemoteBranch(name))
+                        }
                         Some(graph_view::GraphAction::CheckoutCommit(oid)) => {
                             app.checkout_commit(oid)
                         }
@@ -420,14 +423,19 @@ fn delete_ref_modal(app: &mut App, ui: &mut egui::Ui) {
     let (kind, name) = match target {
         DeleteTarget::Branch(n) => ("branch", n.clone()),
         DeleteTarget::Tag(n) => ("tag", n.clone()),
+        DeleteTarget::RemoteBranch(n) => ("remote branch", n.clone()),
     };
+    let warn = if matches!(target, DeleteTarget::RemoteBranch(_)) {
+        format!("Delete {kind} \"{name}\" on the remote? This cannot be undone.")
+    } else {
+        format!("Delete {kind} \"{name}\"? This cannot be undone from the UI.")
+    };
+    let ctx = ui.ctx().clone();
     let resp = egui::Modal::new(egui::Id::new("confirm_delete_ref")).show(ui.ctx(), |ui| {
         ui.set_width(340.0);
         ui.heading(format!("Delete {kind}"));
         ui.add_space(6.0);
-        ui.label(format!(
-            "Delete {kind} \"{name}\"? This cannot be undone from the UI."
-        ));
+        ui.label(warn);
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let cancel = ui.button("Cancel").clicked();
@@ -440,8 +448,10 @@ fn delete_ref_modal(app: &mut App, ui: &mut egui::Ui) {
     });
     let (del, cancel) = resp.inner;
     if del {
-        let target = app.confirm_delete.take().unwrap();
-        app.delete_ref(&target);
+        match app.confirm_delete.take().unwrap() {
+            DeleteTarget::RemoteBranch(name) => app.delete_remote_branch(&ctx, name),
+            other => app.delete_ref(&other),
+        }
     } else if cancel || resp.should_close() {
         app.confirm_delete = None;
     }
@@ -690,13 +700,21 @@ fn remote_bar(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.pull(&ctx);
             }
-            if ui
+            let push = ui
                 .button("\u{f0aa}  Push")
-                .on_hover_text("Push the current branch")
-                .clicked()
-            {
-                app.push(&ctx);
+                .on_hover_text("Push the current branch (right-click to force)");
+            if push.clicked() {
+                app.push(&ctx, false);
             }
+            push.context_menu(|ui| {
+                if ui
+                    .button("\u{f0aa}  Force push (current branch)")
+                    .clicked()
+                {
+                    app.push(&ctx, true);
+                    ui.close();
+                }
+            });
         });
         if app.remote_busy {
             ui.spinner();
@@ -704,6 +722,7 @@ fn remote_bar(app: &mut App, ui: &mut egui::Ui) {
                 crate::app::RemoteKind::Fetch => "Fetching",
                 crate::app::RemoteKind::Pull => "Pulling",
                 crate::app::RemoteKind::Push => "Pushing",
+                crate::app::RemoteKind::DeleteRemote => "Deleting",
             };
             let text = match app.remote_progress {
                 Some((r, t)) if t > 0 => format!("{verb} {r}/{t}"),

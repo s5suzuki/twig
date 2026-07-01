@@ -338,6 +338,22 @@ fn main() -> eframe::Result<()> {
             }
             return Ok(());
         }
+        Some("--delete-remote") => {
+            let path = PathBuf::from(&args[2]);
+            match args[3].split_once('/') {
+                Some((remote, branch)) => {
+                    match repo::delete_remote_branch(&path, remote, branch, |_, _| {}) {
+                        Ok(()) => {
+                            println!("OK: --delete-remote {}", args[3]);
+                            dump(&path);
+                        }
+                        Err(e) => eprintln!("--delete-remote failed: {e}"),
+                    }
+                }
+                None => eprintln!("--delete-remote: expected <remote>/<branch>"),
+            }
+            return Ok(());
+        }
         Some(op @ ("--fetch" | "--pull" | "--push")) => {
             let path = PathBuf::from(&args[2]);
             let remote = args

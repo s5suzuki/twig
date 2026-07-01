@@ -59,6 +59,7 @@ pub enum RemoteKind {
     Fetch,
     Pull,
     Push,
+    DeleteRemote,
 }
 
 impl RemoteKind {
@@ -67,6 +68,7 @@ impl RemoteKind {
             RemoteKind::Fetch => "Fetch",
             RemoteKind::Pull => "Pull",
             RemoteKind::Push => "Push",
+            RemoteKind::DeleteRemote => "Delete remote branch",
         }
     }
 }
@@ -90,6 +92,7 @@ pub enum RefPrompt {
 pub enum DeleteTarget {
     Branch(String),
     Tag(String),
+    RemoteBranch(String),
 }
 
 pub struct App {
@@ -783,6 +786,7 @@ impl App {
         let res = match target {
             DeleteTarget::Branch(name) => repo::delete_branch(&self.selected, name),
             DeleteTarget::Tag(name) => repo::delete_tag(&self.selected, name),
+            DeleteTarget::RemoteBranch(_) => return,
         };
         if let Err(e) = res {
             self.error = Some(format!("delete failed: {e}"));
@@ -857,13 +861,29 @@ impl App {
         self.start_remote(ctx, RemoteKind::Pull, remote, Vec::new());
     }
 
-    pub fn push(&mut self, ctx: &egui::Context) {
+    pub fn push(&mut self, ctx: &egui::Context, force: bool) {
         let remote = repo::primary_remote(&self.selected);
-        let Some(refspec) = repo::head_push_refspec(&self.selected) else {
+        let Some(mut refspec) = repo::head_push_refspec(&self.selected) else {
             self.error = Some("Not on a branch to push".to_string());
             return;
         };
+        if force {
+            refspec.insert(0, '+');
+        }
         self.start_remote(ctx, RemoteKind::Push, remote, vec![refspec]);
+    }
+
+    pub fn delete_remote_branch(&mut self, ctx: &egui::Context, remote_ref: String) {
+        let Some((remote, branch)) = remote_ref.split_once('/') else {
+            self.error = Some(format!("Invalid remote branch: {remote_ref}"));
+            return;
+        };
+        self.start_remote(
+            ctx,
+            RemoteKind::DeleteRemote,
+            Some(remote.to_string()),
+            vec![branch.to_string()],
+        );
     }
 
     fn start_remote(
@@ -908,6 +928,11 @@ impl App {
                     repo::push(&path, &remote, &refspecs, progress).map(|()| repo::SeqOutcome::Done)
                 }
                 RemoteKind::Pull => repo::pull(&path, &remote, progress),
+                RemoteKind::DeleteRemote => {
+                    let branch = refspecs.first().cloned().unwrap_or_default();
+                    repo::delete_remote_branch(&path, &remote, &branch, progress)
+                        .map(|()| repo::SeqOutcome::Done)
+                }
             };
             let _ = tx.send(RemoteMsg::Done(result.map_err(|e| e.to_string())));
             if gate.load(Ordering::Relaxed) {
