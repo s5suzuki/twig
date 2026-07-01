@@ -710,42 +710,62 @@ fn rebase_banner(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
-    use egui::{Key, Modifiers};
+    use crate::keys::{Action, Context};
 
     if app.focus == Pane::Terminal && !app.shell_open {
         app.focus = Pane::RightTab;
     }
 
-    let mut moved = false;
-    for (key, dir) in [
-        (Key::H, Dir::Left),
-        (Key::L, Dir::Right),
-        (Key::K, Dir::Up),
-        (Key::J, Dir::Down),
-    ] {
-        if ui.input_mut(|i| i.consume_key(Modifiers::ALT, key)) {
-            app.move_focus(dir);
-            moved = true;
-        }
-    }
-    if moved {
-        app.pending_g = false;
-        if let Some(id) = ui.ctx().memory(|m| m.focused()) {
-            ui.ctx().memory_mut(|m| m.surrender_focus(id));
-        }
-    }
-
     let tab_cycles = app.focus == Pane::RightTab && app.active_tab != Tab::Editor;
-    if tab_cycles && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
-        app.active_tab = match app.active_tab {
-            Tab::Graph => Tab::Diff,
-            Tab::Diff => Tab::Editor,
-            Tab::Editor => Tab::Graph,
-        };
+    let term_focus = app.terminal_focused();
+    let actions = app.keymap.poll(ui, Context::Global, &mut app.pending_prefix, |a| {
+        match a {
+            Action::CycleTab => tab_cycles,
+            Action::ToggleShell => !term_focus,
+            _ => true,
+        }
+    });
+
+    let mut moved = false;
+    for a in actions {
+        match a {
+            Action::FocusLeft => {
+                app.move_focus(Dir::Left);
+                moved = true;
+            }
+            Action::FocusRight => {
+                app.move_focus(Dir::Right);
+                moved = true;
+            }
+            Action::FocusUp => {
+                app.move_focus(Dir::Up);
+                moved = true;
+            }
+            Action::FocusDown => {
+                app.move_focus(Dir::Down);
+                moved = true;
+            }
+            Action::CycleTab => {
+                app.active_tab = match app.active_tab {
+                    Tab::Graph => Tab::Diff,
+                    Tab::Diff => Tab::Editor,
+                    Tab::Editor => Tab::Graph,
+                };
+            }
+            Action::ToggleShell => app.toggle_shell(),
+            _ => {}
+        }
+    }
+    if moved
+        && let Some(id) = ui.ctx().memory(|m| m.focused())
+    {
+        ui.ctx().memory_mut(|m| m.surrender_focus(id));
     }
 }
 
 fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
+    use crate::keys::{Action, Context};
+
     if app.focus != Pane::RightTab
         || app.active_tab != Tab::Diff
         || app.selected_file.is_none()
@@ -754,31 +774,37 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
     {
         return;
     }
-    use egui::{Key, Modifiers};
     let last = app.diff_last_row();
     let staged = app.selected_file.as_ref().map(|(_, s)| *s).unwrap_or(false);
-
-    if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::J)) {
-        app.move_diff_cursor(1);
-    }
-    if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::K)) {
-        app.move_diff_cursor(-1);
-    }
-    if ui.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::G)) {
-        app.set_diff_cursor(last);
-    }
-    if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::V)) {
-        app.toggle_diff_visual();
-    }
-    if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-        app.diff_anchor = None;
-    }
     let conflict = app.diff.conflict;
-    if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::S)) && !staged && !conflict {
-        app.apply_line_selection();
-    }
-    if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::U)) && staged && !conflict {
-        app.apply_line_selection();
+
+    let actions = app
+        .keymap
+        .poll(ui, Context::Diff, &mut app.pending_prefix, |_| true);
+    for a in actions {
+        match a {
+            Action::DiffDown => app.move_diff_cursor(1),
+            Action::DiffUp => app.move_diff_cursor(-1),
+            Action::DiffTop => app.set_diff_cursor(0),
+            Action::DiffBottom => app.set_diff_cursor(last),
+            Action::DiffToggleVisual => app.toggle_diff_visual(),
+            Action::DiffClearVisual => app.diff_anchor = None,
+            Action::DiffStageSelection => {
+                if !staged && !conflict {
+                    app.apply_line_selection();
+                }
+            }
+            Action::DiffUnstageSelection => {
+                if staged && !conflict {
+                    app.apply_line_selection();
+                }
+            }
+            Action::DiffHalfPageDown => app.scroll_diff(0.5, true),
+            Action::DiffHalfPageUp => app.scroll_diff(0.5, false),
+            Action::DiffPageDown => app.scroll_diff(1.0, true),
+            Action::DiffPageUp => app.scroll_diff(1.0, false),
+            _ => {}
+        }
     }
 }
 
@@ -990,28 +1016,22 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
         return None;
     }
 
-    use egui::{Key, Modifiers};
-    let to_bottom = ui.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::G));
-    let g = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::G));
-    let j = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::J));
-    let k = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::K));
-    let h = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::H));
-    let l = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::L));
-    let enter = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
-    let space = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Space));
-    let e = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::E));
-    let d = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::D));
+    use crate::keys::{Action as Cmd, Context};
+    let acts = app
+        .keymap
+        .poll(ui, Context::Changes, &mut app.pending_prefix, |_| true);
+    let has = |a: Cmd| acts.contains(&a);
+    let go_top = has(Cmd::ChangesTop);
+    let to_bottom = has(Cmd::ChangesBottom);
+    let j = has(Cmd::ChangesDown);
+    let k = has(Cmd::ChangesUp);
+    let h = has(Cmd::ChangesCollapse);
+    let l = has(Cmd::ChangesExpand);
+    let enter = has(Cmd::ChangesActivate);
+    let space = has(Cmd::ChangesStageToggle);
+    let e = has(Cmd::ChangesEdit);
+    let d = has(Cmd::ChangesDiscard);
 
-    let go_top = g && app.pending_g;
-    if go_top {
-        app.pending_g = false;
-    } else if g {
-        app.pending_g = true;
-    }
-    let other = to_bottom || j || k || h || l || enter || space || e || d;
-    if other {
-        app.pending_g = false;
-    }
     if to_bottom {
         app.changes_cursor = last;
     }
@@ -1023,6 +1043,12 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
     }
     if k {
         app.changes_cursor = app.changes_cursor.saturating_sub(1);
+    }
+    if has(Cmd::ChangesHalfPageDown) {
+        app.changes_cursor = (app.changes_cursor + crate::app::LIST_PAGE).min(last);
+    }
+    if has(Cmd::ChangesHalfPageUp) {
+        app.changes_cursor = app.changes_cursor.saturating_sub(crate::app::LIST_PAGE);
     }
 
     let mut action = None;

@@ -5,7 +5,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use git2::Oid;
 
 use crate::config::Config;
+use crate::keys::{Chord, Keymap};
 use crate::repo::{self, DiffMode, DiffRow, FileDiff, Graph, RepoNode, StatusEntry};
+
+pub const LIST_PAGE: usize = 10;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -96,7 +99,8 @@ pub struct App {
     pub focus: Pane,
     pub changes_cursor: usize,
     pub sidebar_cursor: usize,
-    pub pending_g: bool,
+    pub keymap: Keymap,
+    pub pending_prefix: Option<Chord>,
     pub confirm_discard: Option<String>,
 
     pub seq: Option<SeqStatus>,
@@ -119,6 +123,8 @@ pub struct App {
 
 impl App {
     pub fn new(path: PathBuf) -> Self {
+        let config = Config::load();
+        let keymap = Keymap::from_config(&config.keys);
         let mut app = Self {
             root: None,
             error: None,
@@ -150,7 +156,8 @@ impl App {
             focus: Pane::Changes,
             changes_cursor: 0,
             sidebar_cursor: 0,
-            pending_g: false,
+            keymap,
+            pending_prefix: None,
             confirm_discard: None,
             seq: None,
             stashes: Vec::new(),
@@ -158,7 +165,7 @@ impl App {
             name_input: String::new(),
             confirm_delete: None,
             confirm_reset: None,
-            config: Config::load(),
+            config,
             settings_open: false,
             watch_root: path.clone(),
             watcher: None,
@@ -499,6 +506,30 @@ impl App {
 
     pub fn toggle_shell(&mut self) {
         self.shell_open = !self.shell_open;
+    }
+
+    pub fn terminal_focused(&self) -> bool {
+        self.focus == Pane::Terminal
+            || (self.focus == Pane::RightTab && matches!(self.active_tab, Tab::Editor))
+    }
+
+    pub fn scroll_diff(&mut self, fraction: f32, down: bool) {
+        let visible_rows = match self.diff_visible {
+            Some((top, bottom)) => bottom.saturating_sub(top) + 1,
+            None => 20,
+        };
+        let steps = ((visible_rows as f32 * fraction).round() as isize).max(1);
+        let mut cur = self.diff_cursor.min(self.diff_last_row());
+        let dir = if down { 1 } else { -1 };
+        for _ in 0..steps {
+            let next = self.step_line_row(cur, dir);
+            if next == cur {
+                break;
+            }
+            cur = next;
+        }
+        self.diff_cursor = cur;
+        self.diff_scroll_pending = true;
     }
 
     pub fn move_focus(&mut self, dir: Dir) {

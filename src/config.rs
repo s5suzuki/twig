@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use egui::{Color32, Stroke, Visuals};
@@ -116,6 +117,8 @@ pub struct Config {
     pub mono_font: String,
     #[serde(alias = "confirm_delete")]
     pub confirm_discard: bool,
+    #[serde(default)]
+    pub keys: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Default for Config {
@@ -129,6 +132,7 @@ impl Default for Config {
             graph_show_date: true,
             mono_font: "hackgen-console-nf".to_string(),
             confirm_discard: true,
+            keys: BTreeMap::new(),
         }
     }
 }
@@ -260,6 +264,33 @@ mod tests {
         assert!(back.graph_show_date);
         assert_eq!(back.mono_font, "hackgen-console-nf");
         assert!(back.confirm_discard);
+    }
+
+    #[test]
+    fn keys_table_deserializes() {
+        let src = "\
+font_size = 14.0
+
+[keys.diff]
+\"ctrl+e\" = \"diff-half-page-down\"
+
+[keys.global]
+\"ctrl+t\" = \"toggle-shell\"
+";
+        let cfg: Config = toml::from_str(src).unwrap();
+        assert_eq!(
+            cfg.keys["diff"]["ctrl+e"],
+            "diff-half-page-down".to_string()
+        );
+        assert_eq!(cfg.keys["global"]["ctrl+t"], "toggle-shell".to_string());
+        let km = crate::keys::Keymap::from_config(&cfg.keys);
+        let _ = km;
+    }
+
+    #[test]
+    fn missing_keys_table_defaults_empty() {
+        let cfg: Config = toml::from_str("font_size = 14.0").unwrap();
+        assert!(cfg.keys.is_empty());
     }
 
     #[test]

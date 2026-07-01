@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod editor;
 mod fonts;
+mod keys;
 mod repo;
 mod term;
 mod ui;

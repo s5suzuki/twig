@@ -71,22 +71,16 @@ fn sidebar_nav(app: &mut App, ui: &mut egui::Ui, rows: &[SideRow]) -> Option<Nav
         return None;
     }
 
-    use egui::{Key, Modifiers};
-    let press = |ui: &mut egui::Ui, key| ui.input_mut(|i| i.consume_key(Modifiers::NONE, key));
+    use crate::keys::{Action as Cmd, Context};
+    let acts = app
+        .keymap
+        .poll(ui, Context::Sidebar, &mut app.pending_prefix, |_| true);
+    let has = |a: Cmd| acts.contains(&a);
+    let go_top = has(Cmd::SidebarTop);
+    let to_bottom = has(Cmd::SidebarBottom);
+    let j = has(Cmd::SidebarDown);
+    let k = has(Cmd::SidebarUp);
 
-    let to_bottom = ui.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::G));
-    let g = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::G));
-    let j = press(ui, Key::J);
-    let k = press(ui, Key::K);
-    let go_top = g && app.pending_g;
-    if go_top {
-        app.pending_g = false;
-    } else if g {
-        app.pending_g = true;
-    }
-    if to_bottom || j || k {
-        app.pending_g = false;
-    }
     if to_bottom {
         app.sidebar_cursor = last;
     }
@@ -99,13 +93,19 @@ fn sidebar_nav(app: &mut App, ui: &mut egui::Ui, rows: &[SideRow]) -> Option<Nav
     if k {
         app.sidebar_cursor = app.sidebar_cursor.saturating_sub(1);
     }
+    if has(Cmd::SidebarHalfPageDown) {
+        app.sidebar_cursor = (app.sidebar_cursor + crate::app::LIST_PAGE).min(last);
+    }
+    if has(Cmd::SidebarHalfPageUp) {
+        app.sidebar_cursor = app.sidebar_cursor.saturating_sub(crate::app::LIST_PAGE);
+    }
 
     let cur = &rows[app.sidebar_cursor];
     let mut nav = None;
-    if press(ui, Key::Enter) && cur.initialized {
+    if has(Cmd::SidebarSelect) && cur.initialized {
         nav = Some(Nav::Select(cur.path.clone()));
     }
-    if press(ui, Key::L) {
+    if has(Cmd::SidebarExpand) {
         if cur.expandable && !cur.expanded {
             nav = Some(Nav::SetExpanded(cur.path.clone(), true));
         } else if cur.expandable && cur.expanded {
@@ -116,7 +116,7 @@ fn sidebar_nav(app: &mut App, ui: &mut egui::Ui, rows: &[SideRow]) -> Option<Nav
             nav = Some(Nav::Select(cur.path.clone()));
         }
     }
-    if press(ui, Key::H) {
+    if has(Cmd::SidebarCollapse) {
         if cur.expandable && cur.expanded {
             nav = Some(Nav::SetExpanded(cur.path.clone(), false));
         } else {
