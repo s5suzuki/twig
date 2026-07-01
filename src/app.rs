@@ -776,6 +776,7 @@ impl App {
         self.reset_diff_nav();
         self.load_file_diff(file, staged);
         self.active_tab = Tab::Diff;
+        self.focus = Pane::RightTab;
     }
 
     pub fn select_commit(&mut self, oid: Oid) {
@@ -840,6 +841,7 @@ impl App {
     pub fn open_in_editor(&mut self, file: &str) {
         let abs = self.selected.join(file);
         self.active_tab = Tab::Editor;
+        self.focus = Pane::RightTab;
         if self.term.is_some() && self.nvim_socket.exists() {
             if let Err(e) = crate::editor::open_abs_in_server(&abs, &self.nvim_socket) {
                 self.error = Some(e);
