@@ -1,4 +1,4 @@
-mod diff_view;
+pub mod diff_view;
 mod graph_view;
 mod search_view;
 mod sidebar;
@@ -305,7 +305,18 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         sel: app.diff_highlight(),
                         scroll_to_cursor: app.diff_scroll_pending,
                     });
-                    let resp = diff_view::draw(&app.diff, ui, hunk_ctl, nav.as_ref(), find_render.as_ref());
+                    app.ensure_diff_highlight(ui.visuals().dark_mode);
+                    let diff_ver = app.diff_version();
+                    let resp = diff_view::draw(
+                        &app.diff,
+                        ui,
+                        hunk_ctl,
+                        nav.as_ref(),
+                        find_render.as_ref(),
+                        &app.diff_hl,
+                        &mut app.diff_galleys,
+                        diff_ver,
+                    );
                     app.diff_scrolled_prev = app.diff_scroll_pending;
                     app.diff_scroll_pending = false;
                     if nav.is_some() {

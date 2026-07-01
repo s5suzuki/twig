@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 
@@ -22,10 +23,11 @@ impl WorktreeWatcher {
         let dirty = Arc::new(AtomicBool::new(false));
         let dirty_cb = dirty.clone();
         let ctx = ctx.clone();
+        let gitignore = build_gitignore(root);
 
         let mut debouncer = new_debouncer(DEBOUNCE, move |res: DebounceEventResult| {
             let Ok(events) = res else { return };
-            if events.iter().any(|e| !is_ignored(&e.path)) {
+            if events.iter().any(|e| !is_ignored(&gitignore, &e.path)) {
                 dirty_cb.store(true, Ordering::Relaxed);
                 if repaint_gate.load(Ordering::Relaxed) {
                     ctx.request_repaint();
@@ -50,8 +52,22 @@ impl WorktreeWatcher {
     }
 }
 
-fn is_ignored(path: &Path) -> bool {
+fn build_gitignore(root: &Path) -> Gitignore {
+    let mut b = GitignoreBuilder::new(root);
+    let _ = b.add(root.join(".gitignore"));
+    let _ = b.add_line(None, ".git/");
+    let _ = b.add_line(None, "target/");
+    b.build().unwrap_or_else(|_| Gitignore::empty())
+}
+
+fn is_ignored(gitignore: &Gitignore, path: &Path) -> bool {
     if path.components().any(|c| c.as_os_str() == ".git") {
+        return true;
+    }
+    if gitignore
+        .matched_path_or_any_parents(path, path.is_dir())
+        .is_ignore()
+    {
         return true;
     }
 

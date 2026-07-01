@@ -1,11 +1,31 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use egui::{
-    Align, Color32, FontId, Label, Layout, Rect, RichText, ScrollArea, Sense, Stroke, StrokeKind,
-    TextFormat, pos2, text::LayoutJob, vec2,
+    Align, Color32, FontId, Galley, Label, Layout, Rect, RichText, ScrollArea, Sense, Stroke,
+    StrokeKind, TextFormat, pos2, text::LayoutJob, vec2,
 };
 
+use crate::highlight::{DiffHighlight, Span};
 use crate::repo::{DiffRow, FileDiff, LineKind};
+
+#[derive(Default)]
+pub struct DiffGalleyCache {
+    sig: Option<(u64, bool)>,
+    left: HashMap<usize, Arc<Galley>>,
+    right: HashMap<usize, Arc<Galley>>,
+}
+
+impl DiffGalleyCache {
+    fn sync(&mut self, ver: u64, dark: bool) {
+        let sig = (ver, dark);
+        if self.sig != Some(sig) {
+            self.sig = Some(sig);
+            self.left.clear();
+            self.right.clear();
+        }
+    }
+}
 
 const ADD_BG_DARK: Color32 = Color32::from_rgb(0x1c, 0x3a, 0x24);
 const DEL_BG_DARK: Color32 = Color32::from_rgb(0x40, 0x20, 0x24);
@@ -20,6 +40,7 @@ const RULER_MOD: Color32 = Color32::from_rgb(0x4a, 0x90, 0xe2);
 
 const RULER_W: f32 = 14.0;
 const COL_GAP: f32 = 6.0;
+const OVERSCAN: f32 = 300.0;
 
 fn add_bg(dark: bool) -> Color32 {
     if dark { ADD_BG_DARK } else { ADD_BG_LIGHT }
@@ -46,12 +67,16 @@ pub struct DiffResponse {
     pub visible: Option<(usize, usize)>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     diff: &FileDiff,
     ui: &mut egui::Ui,
     hunk_ctl: Option<bool>,
     nav: Option<&DiffNav>,
     find: Option<&FindRender>,
+    hl: &DiffHighlight,
+    cache: &mut DiffGalleyCache,
+    ver: u64,
 ) -> DiffResponse {
     let mut resp = DiffResponse::default();
     if let Some(note) = &diff.note {
@@ -78,7 +103,9 @@ pub fn draw(
                     if let Some(t) = pending {
                         sa = sa.vertical_scroll_offset(t);
                     }
-                    sa.show(ui, |ui| render_rows(diff, ui, hunk_ctl, nav, find, &mut resp))
+                    sa.show(ui, |ui| {
+                        render_rows(diff, ui, hunk_ctl, nav, find, hl, cache, ver, &mut resp)
+                    })
                 },
             )
             .inner;
@@ -95,12 +122,16 @@ pub fn draw(
     resp
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_rows(
     diff: &FileDiff,
     ui: &mut egui::Ui,
     hunk_ctl: Option<bool>,
     nav: Option<&DiffNav>,
     find: Option<&FindRender>,
+    hl: &DiffHighlight,
+    cache: &mut DiffGalleyCache,
+    ver: u64,
     resp: &mut DiffResponse,
 ) {
     ui.spacing_mut().item_spacing.y = 1.0;
@@ -141,6 +172,9 @@ fn render_rows(
     let digits = max_no.to_string().len().max(2);
     let lineno_w = digits as f32 * char_w + 8.0;
     let text_w = ((content_w - 2.0 * lineno_w - 3.0 * COL_GAP - 2.0) / 2.0).max(40.0);
+    let default_color = ui.visuals().text_color();
+    let min_row_h = ui.ctx().fonts_mut(|f| f.row_height(&FontId::monospace(12.0)));
+    cache.sync(ver, dark_mode);
 
     for (i, row) in diff.rows.iter().enumerate() {
         match row {
@@ -185,6 +219,18 @@ fn render_rows(
                 right,
                 kind,
             } => {
+                let y = ui.cursor().top();
+                let force = nav.is_some_and(|n| n.scroll_to_cursor && n.cursor == i);
+                let onscreen = force
+                    || (y + min_row_h >= clip.top() - OVERSCAN && y <= clip.bottom() + OVERSCAN);
+                if !onscreen {
+                    let (rrect, _) =
+                        ui.allocate_exact_size(vec2(content_w, min_row_h), Sense::hover());
+                    if nav.is_some() {
+                        line_rects.push((i, rrect));
+                    }
+                    continue;
+                }
                 let dark = ui.visuals().dark_mode;
                 let (left_bg, right_bg) = match kind {
                     LineKind::Context => (None, None),
@@ -192,15 +238,24 @@ fn render_rows(
                     LineKind::Removed => (Some(del_bg(dark)), None),
                     LineKind::Changed => (Some(del_bg(dark)), Some(add_bg(dark))),
                 };
-                let hl = find
-                    .and_then(|f| f.rows.get(&i))
-                    .unwrap_or(&empty_hl);
+                let find_hl = find.and_then(|f| f.rows.get(&i)).unwrap_or(&empty_hl);
+                let left_syn = hl.left.get(&i).map(Vec::as_slice).unwrap_or(&[]);
+                let right_syn = hl.right.get(&i).map(Vec::as_slice).unwrap_or(&[]);
+
+                let colors = CellColors { default_color, hl_color, cur_color };
+                let left_galley = cell_galley(
+                    ui, &mut cache.left, i, left.as_deref(), text_w, left_syn, &[], colors,
+                );
+                let right_galley = cell_galley(
+                    ui, &mut cache.right, i, right.as_deref(), text_w, right_syn, find_hl, colors,
+                );
+
                 let row_resp = ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = COL_GAP;
                     lineno_cell(ui, *old_no, lineno_w);
-                    text_cell(ui, left.as_deref(), text_w, left_bg, &[], hl_color, cur_color);
+                    paint_cell(ui, &left_galley, text_w, left_bg, min_row_h, default_color);
                     lineno_cell(ui, *new_no, lineno_w);
-                    text_cell(ui, right.as_deref(), text_w, right_bg, hl, hl_color, cur_color);
+                    paint_cell(ui, &right_galley, text_w, right_bg, min_row_h, default_color);
                 });
                 let rrect = row_resp.response.rect;
                 if let Some(nav) = nav {
@@ -310,50 +365,110 @@ fn lineno_cell(ui: &mut egui::Ui, no: Option<u32>, w: f32) {
     });
 }
 
-fn text_cell(
-    ui: &mut egui::Ui,
+#[allow(clippy::too_many_arguments)]
+fn cell_galley(
+    ui: &egui::Ui,
+    cache: &mut HashMap<usize, Arc<Galley>>,
+    i: usize,
     text: Option<&str>,
     w: f32,
-    bg: Option<Color32>,
-    hl: &[(usize, usize, bool)],
+    syn: &[Span],
+    find: &[(usize, usize, bool)],
+    colors: CellColors,
+) -> Arc<Galley> {
+    if syn.is_empty() {
+        return build_galley(ui, text, w, syn, find, colors);
+    }
+    if find.is_empty() {
+        return cache
+            .entry(i)
+            .or_insert_with(|| build_galley(ui, text, w, syn, &[], colors))
+            .clone();
+    }
+    build_galley(ui, text, w, syn, find, colors)
+}
+
+#[derive(Clone, Copy)]
+struct CellColors {
+    default_color: Color32,
     hl_color: Color32,
     cur_color: Color32,
-) {
+}
+
+fn build_galley(
+    ui: &egui::Ui,
+    text: Option<&str>,
+    w: f32,
+    syn: &[Span],
+    find: &[(usize, usize, bool)],
+    colors: CellColors,
+) -> Arc<Galley> {
+    let _ = w;
     let text = text.unwrap_or("");
     let font = FontId::monospace(12.0);
-    let color = ui.visuals().text_color();
-    let galley = if hl.is_empty() {
-        ui.painter().layout(text.to_owned(), font.clone(), color, w)
-    } else {
-        let mut job = LayoutJob::default();
-        job.wrap.max_width = w;
-        let mut pos = 0usize;
-        for &(s, e, is_cur) in hl {
-            let s = s.min(text.len());
-            let e = e.min(text.len());
-            if s < pos || e < s {
-                continue;
-            }
-            if pos < s {
-                job.append(&text[pos..s], 0.0, TextFormat::simple(font.clone(), color));
-            }
-            let mut f = TextFormat::simple(font.clone(), color);
-            f.background = if is_cur { cur_color } else { hl_color };
-            job.append(&text[s..e], 0.0, f);
-            pos = e;
-        }
-        if pos < text.len() {
-            job.append(&text[pos..], 0.0, TextFormat::simple(font.clone(), color));
-        }
-        ui.painter().layout_job(job)
+    let color = colors.default_color;
+    if syn.is_empty() && find.is_empty() {
+        return ui.painter().layout(text.to_owned(), font, color, f32::INFINITY);
+    }
+
+    let len = text.len();
+    let mut bounds = vec![0usize, len];
+    for &(s, e, _) in syn {
+        bounds.push(s.min(len));
+        bounds.push(e.min(len));
+    }
+    for &(s, e, _) in find {
+        bounds.push(s.min(len));
+        bounds.push(e.min(len));
+    }
+    bounds.retain(|&b| text.is_char_boundary(b));
+    bounds.sort_unstable();
+    bounds.dedup();
+
+    let fg_at = |pos: usize| -> Color32 {
+        syn.iter()
+            .find(|&&(s, e, _)| pos >= s && pos < e)
+            .map(|&(_, _, c)| c)
+            .unwrap_or(color)
     };
-    let row_h = ui.ctx().fonts_mut(|f| f.row_height(&font));
-    let h = galley.size().y.max(row_h);
+    let bg_at = |pos: usize| -> Option<Color32> {
+        find.iter()
+            .find(|&&(s, e, _)| pos >= s && pos < e)
+            .map(|&(_, _, is_cur)| if is_cur { colors.cur_color } else { colors.hl_color })
+    };
+
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = f32::INFINITY;
+    for pair in bounds.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if a >= b {
+            continue;
+        }
+        let mut f = TextFormat::simple(font.clone(), fg_at(a));
+        if let Some(bg) = bg_at(a) {
+            f.background = bg;
+        }
+        job.append(&text[a..b], 0.0, f);
+    }
+    ui.painter().layout_job(job)
+}
+
+fn paint_cell(
+    ui: &mut egui::Ui,
+    galley: &Arc<Galley>,
+    w: f32,
+    bg: Option<Color32>,
+    min_row_h: f32,
+    color: Color32,
+) {
+    let h = galley.size().y.max(min_row_h);
     let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     if let Some(c) = bg {
         ui.painter().rect_filled(rect, 0.0, c);
     }
-    ui.painter().galley(rect.min, galley, color);
+    ui.painter()
+        .with_clip_rect(rect)
+        .galley(rect.min, galley.clone(), color);
 }
 
 fn draw_ruler(

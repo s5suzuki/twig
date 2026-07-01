@@ -10,7 +10,7 @@ pub enum DiffMode {
     Unstaged,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LineKind {
     Context,
     Added,
@@ -18,6 +18,7 @@ pub enum LineKind {
     Changed,
 }
 
+#[derive(Hash)]
 pub enum DiffRow {
     FileHeader(String),
     Hunk {

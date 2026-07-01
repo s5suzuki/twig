@@ -206,6 +206,11 @@ pub struct App {
     pub commit_detail: String,
     pub selected_commit_file: Option<String>,
     pub diff: FileDiff,
+    pub diff_hl: crate::highlight::DiffHighlight,
+    pub diff_galleys: crate::ui::diff_view::DiffGalleyCache,
+    diff_ver: u64,
+    diff_sig: u64,
+    diff_hl_sig: Option<(u64, bool)>,
     pub diff_cursor: usize,
     pub diff_anchor: Option<usize>,
     pub diff_scroll_pending: bool,
@@ -277,6 +282,11 @@ impl App {
             commit_detail: String::new(),
             selected_commit_file: None,
             diff: empty_diff(),
+            diff_hl: crate::highlight::DiffHighlight::default(),
+            diff_galleys: crate::ui::diff_view::DiffGalleyCache::default(),
+            diff_ver: 0,
+            diff_sig: 0,
+            diff_hl_sig: None,
             diff_cursor: 0,
             diff_anchor: None,
             diff_scroll_pending: false,
@@ -421,21 +431,60 @@ impl App {
         } else {
             DiffMode::Unstaged
         };
+        let prev = self.selected_file.clone();
         match repo::file_diff(&self.selected, &file, mode) {
-            Ok(d) => self.diff = d,
+            Ok(d) => {
+                let sig = hash_diff(&d.rows);
+                let unchanged = prev.as_ref() == Some(&(file.clone(), staged))
+                    && sig == self.diff_sig
+                    && !d.rows.is_empty();
+                self.diff = d;
+                self.diff_sig = sig;
+                if !unchanged {
+                    self.diff_ver = self.diff_ver.wrapping_add(1);
+                    self.find.invalidate();
+                }
+            }
             Err(e) => {
                 self.diff = FileDiff {
                     rows: Vec::new(),
                     note: Some(format!("diff failed: {e}")),
                     conflict: false,
-                }
+                };
+                self.diff_sig = 0;
+                self.diff_ver = self.diff_ver.wrapping_add(1);
+                self.find.invalidate();
             }
         }
         self.selected_file = Some((file, staged));
         self.clear_commit_selection();
-        self.find.invalidate();
 
         self.clamp_diff_nav();
+    }
+
+    pub fn diff_version(&self) -> u64 {
+        self.diff_ver
+    }
+
+    fn diff_path(&self) -> Option<String> {
+        self.selected_file
+            .as_ref()
+            .map(|(p, _)| p.clone())
+            .or_else(|| self.selected_commit_file.clone())
+    }
+
+    pub fn ensure_diff_highlight(&mut self, dark: bool) {
+        let sig = (self.diff_ver, dark);
+        if self.diff_hl_sig == Some(sig) {
+            return;
+        }
+        self.diff_hl_sig = Some(sig);
+        self.diff_hl = match self.diff_path() {
+            Some(path) if !self.diff.rows.is_empty() => {
+                crate::highlight::highlight_diff(&path, &self.diff.rows, dark)
+            }
+            _ => crate::highlight::DiffHighlight::default(),
+        };
     }
 
     pub fn open_find(&mut self) {
@@ -791,6 +840,7 @@ impl App {
         {
             self.clear_commit_selection();
             self.diff = empty_diff();
+            self.diff_ver = self.diff_ver.wrapping_add(1);
             return;
         }
         let short = oid.to_string();
@@ -805,6 +855,7 @@ impl App {
             note: Some("Select a file from the commit".to_string()),
             conflict: false,
         };
+        self.diff_ver = self.diff_ver.wrapping_add(1);
     }
 
     pub fn select_commit_file(&mut self, file: String) {
@@ -823,6 +874,7 @@ impl App {
         }
         self.selected_file = None;
         self.selected_commit_file = Some(file);
+        self.diff_ver = self.diff_ver.wrapping_add(1);
         self.reset_diff_nav();
         self.active_tab = Tab::Diff;
     }
@@ -1388,6 +1440,13 @@ impl App {
             }
         }
     }
+}
+
+fn hash_diff(rows: &[DiffRow]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    rows.hash(&mut h);
+    h.finish()
 }
 
 fn sh_quote(s: &str) -> String {

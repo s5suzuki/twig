@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod editor;
 mod fonts;
+mod highlight;
 mod keys;
 mod repo;
 mod search;
@@ -34,6 +35,40 @@ fn main() -> eframe::Result<()> {
             match repo::file_diff(&path, &args[3], mode) {
                 Ok(d) => print_diff(&d),
                 Err(e) => eprintln!("diff failed: {e}"),
+            }
+            return Ok(());
+        }
+        Some("--hl") => {
+            let path = PathBuf::from(&args[2]);
+            let file = &args[3];
+            let staged = args.get(4).map(String::as_str) == Some("staged");
+            let mode = if staged {
+                repo::DiffMode::Staged
+            } else {
+                repo::DiffMode::Unstaged
+            };
+            match repo::file_diff(&path, file, mode) {
+                Ok(d) => {
+                    let hl = highlight::highlight_diff(file, &d.rows, true);
+                    println!(
+                        "rows: {}  left_hl: {}  right_hl: {}",
+                        d.rows.len(),
+                        hl.left.len(),
+                        hl.right.len()
+                    );
+                    for (i, row) in d.rows.iter().enumerate() {
+                        if let repo::DiffRow::Line { right: Some(t), .. } = row
+                            && let Some(spans) = hl.right.get(&i)
+                        {
+                            print!("{i:>4} | ");
+                            for &(s, e, c) in spans {
+                                print!("[{:02x}{:02x}{:02x}]{}", c.r(), c.g(), c.b(), &t[s..e]);
+                            }
+                            println!();
+                        }
+                    }
+                }
+                Err(e) => eprintln!("hl failed: {e}"),
             }
             return Ok(());
         }
