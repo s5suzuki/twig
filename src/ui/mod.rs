@@ -978,12 +978,22 @@ fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
                 app.move_focus(Dir::Down);
                 moved = true;
             }
-            Action::CycleTab => {
+            Action::CycleTab | Action::CycleTabFwd => {
+                app.focus = Pane::RightTab;
                 app.active_tab = match app.active_tab {
                     Tab::Graph => Tab::Diff,
                     Tab::Diff => Tab::Search,
                     Tab::Search => Tab::Editor,
                     Tab::Editor => Tab::Graph,
+                };
+            }
+            Action::CycleTabBack => {
+                app.focus = Pane::RightTab;
+                app.active_tab = match app.active_tab {
+                    Tab::Graph => Tab::Editor,
+                    Tab::Editor => Tab::Search,
+                    Tab::Search => Tab::Diff,
+                    Tab::Diff => Tab::Graph,
                 };
             }
             Action::ToggleShell => app.toggle_shell(),
