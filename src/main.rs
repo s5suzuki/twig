@@ -468,7 +468,11 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
-    let native_options = eframe::NativeOptions::default();
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_decorations(config::Config::load().show_title_bar),
+        ..Default::default()
+    };
     eframe::run_native(
         "twig",
         native_options,

@@ -779,6 +779,15 @@ fn draw_settings(app: &mut App, ctx: &egui::Context) {
             {
                 save = true;
             }
+            if ui
+                .checkbox(&mut app.config.show_title_bar, "Show window title bar")
+                .changed()
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(
+                    app.config.show_title_bar,
+                ));
+                save = true;
+            }
         });
     app.settings_open = open;
 

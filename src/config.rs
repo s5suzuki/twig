@@ -115,6 +115,7 @@ pub struct Config {
     pub graph_show_author: bool,
     pub graph_show_date: bool,
     pub mono_font: String,
+    pub show_title_bar: bool,
     #[serde(alias = "confirm_delete")]
     pub confirm_discard: bool,
     #[serde(default)]
@@ -131,6 +132,7 @@ impl Default for Config {
             graph_show_author: true,
             graph_show_date: true,
             mono_font: "hackgen-console-nf".to_string(),
+            show_title_bar: true,
             confirm_discard: true,
             keys: BTreeMap::new(),
         }
