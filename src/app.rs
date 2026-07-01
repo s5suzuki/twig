@@ -1381,11 +1381,11 @@ impl App {
         self.remote_task = None;
         self.remote_busy = false;
         self.remote_progress = None;
+        self.after_commit_topology_change();
         match res {
             Ok(_) => self.error = None,
             Err(e) => self.error = Some(format!("{} failed: {e}", self.remote_kind.verb())),
         }
-        self.after_commit_topology_change();
     }
 
     fn after_commit_topology_change(&mut self) {
