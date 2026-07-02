@@ -297,7 +297,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         Some(graph_view::GraphAction::StashApply(i)) => app.stash_apply(i),
                         Some(graph_view::GraphAction::StashDrop(i)) => app.stash_drop(i),
                         Some(graph_view::GraphAction::Push) => app.push(&ctx, false),
-                        Some(graph_view::GraphAction::ForcePush) => app.push(&ctx, true),
+                        Some(graph_view::GraphAction::ForcePush) => app.request_force_push(),
                         Some(graph_view::GraphAction::Fetch) => app.fetch(&ctx),
                         None => {}
                     }
@@ -480,6 +480,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     delete_ref_modal(app, ui);
     reset_modal(app, ui);
     confirm_op_modal(app, ui);
+    force_push_modal(app, ui);
     amend_confirm_modal(app, ui);
     search_confirm_modal(app, ui);
 
@@ -879,6 +880,47 @@ fn confirm_op_modal(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+fn force_push_modal(app: &mut App, ui: &mut egui::Ui) {
+    if !app.confirm_force_push {
+        return;
+    }
+    let ctx = ui.ctx().clone();
+    let remote = crate::repo::primary_remote(&app.selected).unwrap_or_else(|| "origin".to_string());
+    let branch = crate::repo::head_push_refspec(&app.selected)
+        .and_then(|r| r.split(':').next().map(str::to_string))
+        .map(|r| r.trim_start_matches("refs/heads/").to_string())
+        .unwrap_or_default();
+    let confirm_key = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let resp = egui::Modal::new(egui::Id::new("confirm_force_push")).show(ui.ctx(), |ui| {
+        ui.set_width(380.0);
+        ui.heading("\u{f0aa}  Force push");
+        ui.add_space(6.0);
+        ui.label(format!(
+            "Force-push \"{branch}\" to \"{remote}\"? This overwrites the remote branch and can \
+             discard commits others may have pushed."
+        ));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let cancel = ui.button("Cancel (Esc)").clicked();
+            let go = ui
+                .add(
+                    egui::Button::new("Force push (Enter)")
+                        .fill(egui::Color32::from_rgb(0x8b, 0x2e, 0x2e)),
+                )
+                .clicked();
+            (go, cancel)
+        })
+        .inner
+    });
+    let (go, cancel) = resp.inner;
+    if go || confirm_key {
+        app.confirm_force_push = false;
+        app.push(&ctx, true);
+    } else if cancel || resp.should_close() {
+        app.confirm_force_push = false;
+    }
+}
+
 fn amend_confirm_modal(app: &mut App, ui: &mut egui::Ui) {
     if !app.confirm_amend {
         return;
@@ -1138,7 +1180,7 @@ fn remote_bar(app: &mut App, ui: &mut egui::Ui) {
                     .button("\u{f0aa}  Force push (current branch)")
                     .clicked()
                 {
-                    app.push(&ctx, true);
+                    app.request_force_push();
                     ui.close();
                 }
             });
@@ -1423,6 +1465,7 @@ fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
                 }
             }
             Action::GraphPush => app.push(&ctx, false),
+            Action::GraphForcePush => app.request_force_push(),
             Action::GraphFetch => app.fetch(&ctx),
             Action::GraphPull => app.pull(&ctx),
             _ => {}

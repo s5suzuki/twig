@@ -108,6 +108,7 @@ pub enum Action {
     GraphRebaseInteractive,
     GraphCheckout,
     GraphPush,
+    GraphForcePush,
     GraphFetch,
     GraphPull,
 }
@@ -178,6 +179,7 @@ impl Action {
         (Action::GraphRebaseInteractive, "graph-rebase-interactive", "Interactively rebase onto the commit"),
         (Action::GraphCheckout, "graph-checkout", "Check out the commit / branch"),
         (Action::GraphPush, "graph-push", "Push the current branch"),
+        (Action::GraphForcePush, "graph-force-push", "Force-push the current branch (with confirmation)"),
         (Action::GraphFetch, "graph-fetch", "Fetch from the remote"),
         (Action::GraphPull, "graph-pull", "Pull the current branch"),
     ];
@@ -431,6 +433,7 @@ impl Keymap {
         km.push(Graph, n, I, GraphRebaseInteractive);
         km.push(Graph, n, O, GraphCheckout);
         km.push(Graph, n, P, GraphPush);
+        km.push(Graph, shift, P, GraphForcePush);
         km.push(Graph, n, F, GraphFetch);
 
         km

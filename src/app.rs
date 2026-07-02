@@ -324,6 +324,7 @@ pub struct App {
     pub confirm_delete: Option<DeleteTarget>,
     pub reset_prompt: Option<Oid>,
     pub confirm_op: Option<(GraphOp, Oid)>,
+    pub confirm_force_push: bool,
 
     pub config: Config,
     pub settings_open: bool,
@@ -408,6 +409,7 @@ impl App {
             confirm_delete: None,
             reset_prompt: None,
             confirm_op: None,
+            confirm_force_push: false,
             config,
             settings_open: false,
             help_open: false,
@@ -1343,6 +1345,7 @@ impl App {
             || self.confirm_delete.is_some()
             || self.reset_prompt.is_some()
             || self.confirm_op.is_some()
+            || self.confirm_force_push
             || self.confirm_amend
             || self.search_confirm
     }
@@ -1802,6 +1805,14 @@ impl App {
         }
         let remote = repo::primary_remote(&self.selected);
         self.start_remote(ctx, RemoteKind::Pull, remote, Vec::new());
+    }
+
+    pub fn request_force_push(&mut self) {
+        if repo::head_push_refspec(&self.selected).is_none() {
+            self.error = Some("Not on a branch to push".to_string());
+            return;
+        }
+        self.confirm_force_push = true;
     }
 
     pub fn push(&mut self, ctx: &egui::Context, force: bool) {
