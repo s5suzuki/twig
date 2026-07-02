@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use git2::{Oid, ReferenceType, Repository, Sort};
+use git2::{Oid, ReferenceType, Repository, Sort, StatusOptions};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RefKind {
@@ -31,6 +31,7 @@ pub struct GraphRow {
     pub refs: Vec<RefLabel>,
 
     pub is_head: bool,
+    pub is_uncommitted: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -96,6 +97,29 @@ pub fn build(repo_path: &Path, limit: usize) -> Result<Graph, git2::Error> {
     let mut active: Vec<Option<Lane>> = Vec::new();
     let mut next_color = 0usize;
     let mut max_col = 0usize;
+
+    if let Some(head) = head_oid {
+        let n = uncommitted_count(&repo);
+        if n > 0 {
+            let color = next_color;
+            next_color += 1;
+            ensure_len(&mut active, 1);
+            active[0] = Some(Lane { oid: head, color });
+            rows.push(GraphRow {
+                id: Oid::ZERO_SHA1,
+                short_id: String::new(),
+                summary: format!("Uncommitted Changes ({n})"),
+                author: String::new(),
+                date: String::new(),
+                node_col: 0,
+                node_color: color,
+                segments: vec![Segment::NodeToBottom { col: 0, color }],
+                refs: Vec::new(),
+                is_head: false,
+                is_uncommitted: true,
+            });
+        }
+    }
 
     for oid in walk.take(limit) {
         let oid = oid?;
@@ -206,10 +230,19 @@ pub fn build(repo_path: &Path, limit: usize) -> Result<Graph, git2::Error> {
             segments,
             refs,
             is_head: head_oid == Some(oid),
+            is_uncommitted: false,
         });
     }
 
     Ok(Graph { rows, max_col })
+}
+
+fn uncommitted_count(repo: &Repository) -> usize {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    repo.statuses(Some(&mut opts))
+        .map(|s| s.len())
+        .unwrap_or(0)
 }
 
 fn collect_refs(repo: &Repository) -> HashMap<Oid, Vec<RefLabel>> {

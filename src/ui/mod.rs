@@ -311,9 +311,13 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                             ui.weak(&path);
                         });
                         ui.separator();
-                    } else if let Some((_, label)) = app.selected_commit.clone() {
+                    } else if let Some((oid, label)) = app.selected_commit.clone() {
                         ui.horizontal(|ui| {
-                            ui.weak(format!("commit {label}"));
+                            if oid.is_zero() {
+                                ui.weak(label);
+                            } else {
+                                ui.weak(format!("commit {label}"));
+                            }
                             if let Some(f) = &app.selected_commit_file {
                                 ui.weak("·");
                                 ui.weak(f);

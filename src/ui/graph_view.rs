@@ -185,7 +185,15 @@ pub fn draw(
             }
         }
 
-        painter.circle_filled(pos2(node_x, y_mid), NODE_R, lane_color(row.node_color));
+        if row.is_uncommitted {
+            painter.circle_stroke(
+                pos2(node_x, y_mid),
+                NODE_R,
+                Stroke::new(1.8, lane_color(row.node_color)),
+            );
+        } else {
+            painter.circle_filled(pos2(node_x, y_mid), NODE_R, lane_color(row.node_color));
+        }
         if row.is_head {
             painter.circle_stroke(
                 pos2(node_x, y_mid),
@@ -212,7 +220,11 @@ pub fn draw(
             Align2::LEFT_CENTER,
             &row.summary,
             FontId::proportional(13.0),
-            text_color,
+            if row.is_uncommitted {
+                Color32::from_gray(155)
+            } else {
+                text_color
+            },
         );
 
         let mut meta_x = summary_rect.right() + TEXT_GAP * 1.5;
@@ -310,7 +322,9 @@ pub fn draw(
         let kb_oid = cursor_commit
             .map(|i| graph.rows[i].id)
             .or(if cursor_file.is_some() { selected } else { None });
-        if let (Some(oid), Some(r)) = (kb_oid, cursor_rect) {
+        if let (Some(oid), Some(r)) = (kb_oid, cursor_rect)
+            && !oid.is_zero()
+        {
             *menu = Some(GraphMenu {
                 oid,
                 pos: pos2(r.left() + gutter, r.bottom()),
@@ -320,6 +334,7 @@ pub fn draw(
     } else if resp.secondary_clicked()
         && let Some(p) = resp.interact_pointer_pos()
         && let Some((_, _, oid)) = commit_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b)
+        && !oid.is_zero()
     {
         *menu = Some(GraphMenu {
             oid: *oid,

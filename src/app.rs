@@ -508,6 +508,21 @@ impl App {
                 self.error = Some(format!("Failed to read status: {e}"));
             }
         }
+        if self.selected_commit.as_ref().is_some_and(|(o, _)| o.is_zero()) {
+            let files = self.uncommitted_commit_files();
+            if files.is_empty() {
+                self.clear_commit_selection();
+                self.diff = empty_diff();
+                self.diff_ver = self.diff_ver.wrapping_add(1);
+            } else {
+                if let Some(p) = &self.selected_commit_file
+                    && !files.iter().any(|f| &f.path == p)
+                {
+                    self.selected_commit_file = None;
+                }
+                self.commit_files = files;
+            }
+        }
         self.sync_seq_state();
         self.stashes = repo::stash_list(&self.selected);
     }
@@ -934,31 +949,66 @@ impl App {
     }
 
     fn load_commit(&mut self, oid: Oid) {
-        let short = oid.to_string();
-        let label = short[..7.min(short.len())].to_string();
-        self.commit_files = repo::commit_files(&self.selected, oid).unwrap_or_default();
-        self.commit_detail = repo::commit_message(&self.selected, oid).unwrap_or_default();
+        if oid.is_zero() {
+            self.commit_files = self.uncommitted_commit_files();
+            self.commit_detail = String::new();
+            self.selected_commit = Some((oid, "Uncommitted Changes".to_string()));
+        } else {
+            let short = oid.to_string();
+            let label = short[..7.min(short.len())].to_string();
+            self.commit_files = repo::commit_files(&self.selected, oid).unwrap_or_default();
+            self.commit_detail = repo::commit_message(&self.selected, oid).unwrap_or_default();
+            self.selected_commit = Some((oid, label));
+        }
         self.selected_file = None;
-        self.selected_commit = Some((oid, label));
         self.selected_commit_file = None;
         self.diff = FileDiff {
             rows: Vec::new(),
-            note: Some("Select a file from the commit".to_string()),
+            note: Some("Select a file".to_string()),
             conflict: false,
         };
         self.diff_ver = self.diff_ver.wrapping_add(1);
+    }
+
+    fn uncommitted_commit_files(&self) -> Vec<repo::CommitFile> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for e in self.unstaged.iter().chain(self.staged.iter()) {
+            if seen.insert(e.path.clone()) {
+                out.push(repo::CommitFile {
+                    path: e.path.clone(),
+                    kind: e.kind,
+                });
+            }
+        }
+        out
     }
 
     pub fn select_commit_file(&mut self, file: String) {
         let Some((oid, _)) = self.selected_commit else {
             return;
         };
-        match repo::commit_file_diff(&self.selected, oid, &file) {
-            Ok(d) => self.diff = d,
+        let result = if oid.is_zero() {
+            let staged = self.worktree_file_staged(&file);
+            let mode = if staged {
+                DiffMode::Staged
+            } else {
+                DiffMode::Unstaged
+            };
+            repo::file_diff(&self.selected, &file, mode)
+        } else {
+            repo::commit_file_diff(&self.selected, oid, &file)
+        };
+        match result {
+            Ok(d) => {
+                self.diff_sig = hash_diff(&d.rows);
+                self.diff = d;
+            }
             Err(e) => {
+                self.diff_sig = 0;
                 self.diff = FileDiff {
                     rows: Vec::new(),
-                    note: Some(format!("commit file diff failed: {e}")),
+                    note: Some(format!("file diff failed: {e}")),
                     conflict: false,
                 }
             }
@@ -968,6 +1018,11 @@ impl App {
         self.diff_ver = self.diff_ver.wrapping_add(1);
         self.reset_diff_nav();
         self.active_tab = Tab::Diff;
+    }
+
+    fn worktree_file_staged(&self, file: &str) -> bool {
+        !self.unstaged.iter().any(|e| e.path == file)
+            && self.staged.iter().any(|e| e.path == file)
     }
 
     pub fn graph_items(&self) -> Vec<GraphItem> {
@@ -1040,13 +1095,14 @@ impl App {
     pub fn graph_target_commit(&self) -> Option<Oid> {
         let items = self.graph_items();
         let idx = self.graph_cursor.min(items.len().checked_sub(1)?);
-        match items.get(idx)? {
+        let oid = match items.get(idx)? {
             GraphItem::Commit(r) => Some(self.graph.rows[*r].id),
             GraphItem::File(_) => match items[self.parent_commit_item(&items, idx)?] {
                 GraphItem::Commit(r) => Some(self.graph.rows[r].id),
                 GraphItem::File(_) => None,
             },
-        }
+        };
+        oid.filter(|o| !o.is_zero())
     }
 
     pub fn set_graph_cursor_to_file(&mut self, path: &str) {
@@ -1799,6 +1855,31 @@ impl App {
                     self.selected_file = None;
                     self.diff = empty_diff();
                 }
+            }
+        }
+        self.refresh_uncommitted_diff();
+    }
+
+    fn refresh_uncommitted_diff(&mut self) {
+        if !self.selected_commit.as_ref().is_some_and(|(o, _)| o.is_zero()) {
+            return;
+        }
+        let Some(file) = self.selected_commit_file.clone() else {
+            return;
+        };
+        let mode = if self.worktree_file_staged(&file) {
+            DiffMode::Staged
+        } else {
+            DiffMode::Unstaged
+        };
+        if let Ok(d) = repo::file_diff(&self.selected, &file, mode) {
+            let sig = hash_diff(&d.rows);
+            let changed = sig != self.diff_sig || d.rows.is_empty();
+            self.diff = d;
+            self.diff_sig = sig;
+            if changed {
+                self.diff_ver = self.diff_ver.wrapping_add(1);
+                self.find.invalidate();
             }
         }
     }
