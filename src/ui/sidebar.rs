@@ -26,6 +26,7 @@ pub fn draw_tree(app: &mut App, ui: &mut egui::Ui) {
     let cursor_path = rows.get(app.sidebar_cursor).map(|r| r.path.clone());
 
     let mut newly_selected: Option<PathBuf> = None;
+    let mut sub_action: Option<SubAction> = None;
     match nav {
         Some(Nav::Select(p)) => newly_selected = Some(p),
         Some(Nav::SetExpanded(path, val)) => {
@@ -41,8 +42,10 @@ pub fn draw_tree(app: &mut App, ui: &mut egui::Ui) {
             root,
             &selected,
             cursor_path.as_deref(),
+            None,
             ui,
             &mut newly_selected,
+            &mut sub_action,
         );
     } else {
         ui.weak("(no repository loaded)");
@@ -51,11 +54,27 @@ pub fn draw_tree(app: &mut App, ui: &mut egui::Ui) {
     if let Some(path) = newly_selected {
         app.select_repo(path);
     }
+    match sub_action {
+        Some(SubAction::Init(parent, name)) => {
+            let ctx = ui.ctx().clone();
+            app.submodule_init(&ctx, parent, name);
+        }
+        Some(SubAction::Update(parent, name)) => {
+            let ctx = ui.ctx().clone();
+            app.submodule_update(&ctx, parent, name);
+        }
+        None => {}
+    }
 }
 
 enum Nav {
     Select(PathBuf),
     SetExpanded(PathBuf, bool),
+}
+
+enum SubAction {
+    Init(PathBuf, String),
+    Update(PathBuf, String),
 }
 
 fn sidebar_nav(app: &mut App, ui: &mut egui::Ui, rows: &[SideRow]) -> Option<Nav> {
@@ -165,12 +184,15 @@ fn set_expanded(node: &mut RepoNode, path: &Path, val: bool) -> bool {
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_node(
     node: &mut RepoNode,
     selected: &Path,
     cursor: Option<&Path>,
+    parent: Option<&Path>,
     ui: &mut egui::Ui,
     out: &mut Option<PathBuf>,
+    sub_action: &mut Option<SubAction>,
 ) {
     let is_cursor = cursor == Some(node.path.as_path());
     let resp = ui.horizontal(|ui| {
@@ -183,23 +205,30 @@ fn draw_node(
             }
         }
 
-        if !node.initialized {
+        let label = if !node.initialized {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(format!("{} (uninitialized)", node.name)).weak(),
                 )
-                .truncate(),
-            );
+                .truncate()
+                .sense(egui::Sense::click()),
+            )
         } else {
             let is_sel = node.path == selected;
-            if ui
-                .add(egui::Button::selectable(is_sel, &node.name).truncate())
-                .clicked()
-            {
+            let b = ui.add(egui::Button::selectable(is_sel, &node.name).truncate());
+            if b.clicked() {
                 *out = Some(node.path.clone());
             }
-        }
+            b
+        };
+        draw_badges(node, ui);
+        label
     });
+
+    if let Some(parent) = parent {
+        submodule_menu(&resp.inner, node, parent, sub_action);
+    }
+
     if is_cursor {
         ui.painter().rect_stroke(
             resp.response.rect.expand(1.0),
@@ -210,10 +239,57 @@ fn draw_node(
     }
 
     if node.expanded && !node.children.is_empty() {
+        let parent_path = node.path.clone();
         ui.indent(node.path.clone(), |ui| {
             for child in &mut node.children {
-                draw_node(child, selected, cursor, ui, out);
+                draw_node(
+                    child,
+                    selected,
+                    cursor,
+                    Some(&parent_path),
+                    ui,
+                    out,
+                    sub_action,
+                );
             }
         });
     }
+}
+
+fn draw_badges(node: &RepoNode, ui: &mut egui::Ui) {
+    if node.drifted {
+        ui.add(egui::Label::new(
+            egui::RichText::new("\u{f062}")
+                .color(egui::Color32::from_rgb(0xff, 0xb8, 0x6c))
+                .small(),
+        ))
+        .on_hover_text("Checked out at a commit the parent does not record");
+    }
+    if node.dirty {
+        ui.add(egui::Label::new(
+            egui::RichText::new("\u{f111}")
+                .color(egui::Color32::from_rgb(0xe6, 0xd8, 0x6b))
+                .small(),
+        ))
+        .on_hover_text("Uncommitted changes inside the submodule");
+    }
+}
+
+fn submodule_menu(
+    resp: &egui::Response,
+    node: &RepoNode,
+    parent: &Path,
+    sub_action: &mut Option<SubAction>,
+) {
+    resp.context_menu(|ui| {
+        if node.initialized {
+            if ui.button("\u{f021}  Update").clicked() {
+                *sub_action = Some(SubAction::Update(parent.to_path_buf(), node.name.clone()));
+                ui.close();
+            }
+        } else if ui.button("\u{f019}  Initialize").clicked() {
+            *sub_action = Some(SubAction::Init(parent.to_path_buf(), node.name.clone()));
+            ui.close();
+        }
+    });
 }

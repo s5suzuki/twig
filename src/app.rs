@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -157,6 +157,8 @@ pub enum RemoteKind {
     Pull,
     Push,
     DeleteRemote,
+    SubmoduleInit,
+    SubmoduleUpdate,
 }
 
 impl RemoteKind {
@@ -166,7 +168,13 @@ impl RemoteKind {
             RemoteKind::Pull => "Pull",
             RemoteKind::Push => "Push",
             RemoteKind::DeleteRemote => "Delete remote branch",
+            RemoteKind::SubmoduleInit => "Initialize submodule",
+            RemoteKind::SubmoduleUpdate => "Update submodule",
         }
+    }
+
+    fn rediscovers(self) -> bool {
+        matches!(self, RemoteKind::SubmoduleInit | RemoteKind::SubmoduleUpdate)
     }
 }
 
@@ -532,6 +540,9 @@ impl App {
         }
         self.sync_seq_state();
         self.stashes = repo::stash_list(&self.selected);
+        if let Some(root) = &mut self.root {
+            repo::refresh_badges(root);
+        }
     }
 
     fn load_file_diff(&mut self, file: String, staged: bool) {
@@ -1462,9 +1473,22 @@ impl App {
                 self.selected_file = None;
                 self.clear_commit_selection();
                 self.diff = empty_diff();
+                self.auto_stage_pointer();
                 self.reload();
             }
             Err(e) => self.error = Some(format!("commit failed: {e}")),
+        }
+    }
+
+    fn auto_stage_pointer(&mut self) {
+        let parent = self
+            .root
+            .as_ref()
+            .and_then(|root| find_submodule_parent(root, &self.selected));
+        if let Some((parent_path, name)) = parent
+            && let Err(e) = repo::stage_submodule_pointer(&parent_path, &name)
+        {
+            self.error = Some(format!("stage submodule pointer failed: {e}"));
         }
     }
 
@@ -1508,6 +1532,7 @@ impl App {
                 self.selected_file = None;
                 self.clear_commit_selection();
                 self.diff = empty_diff();
+                self.auto_stage_pointer();
                 self.reload();
             }
             Err(e) => self.error = Some(format!("amend failed: {e}")),
@@ -1832,7 +1857,59 @@ impl App {
                     repo::delete_remote_branch(&path, &remote, &branch, progress)
                         .map(|()| repo::SeqOutcome::Done)
                 }
+                RemoteKind::SubmoduleInit | RemoteKind::SubmoduleUpdate => {
+                    Err(git2::Error::from_str("not a remote operation"))
+                }
             };
+            let _ = tx.send(RemoteMsg::Done(result.map_err(|e| e.to_string())));
+            if gate.load(Ordering::Relaxed) {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    pub fn submodule_init(&mut self, ctx: &egui::Context, parent: PathBuf, name: String) {
+        self.start_submodule(ctx, RemoteKind::SubmoduleInit, parent, name);
+    }
+
+    pub fn submodule_update(&mut self, ctx: &egui::Context, parent: PathBuf, name: String) {
+        self.start_submodule(ctx, RemoteKind::SubmoduleUpdate, parent, name);
+    }
+
+    fn start_submodule(
+        &mut self,
+        ctx: &egui::Context,
+        kind: RemoteKind,
+        parent: PathBuf,
+        name: String,
+    ) {
+        if self.remote_busy {
+            self.error = Some("A remote operation is already running".to_string());
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        let gate = self.repaint_gate.clone();
+
+        self.remote_busy = true;
+        self.remote_kind = kind;
+        self.remote_progress = None;
+        self.remote_task = Some(rx);
+        self.error = None;
+
+        thread::spawn(move || {
+            let progress = |received, total| {
+                let _ = tx.send(RemoteMsg::Progress { received, total });
+                if gate.load(Ordering::Relaxed) {
+                    ctx.request_repaint();
+                }
+            };
+            let result = match kind {
+                RemoteKind::SubmoduleUpdate => repo::submodule_update(&parent, &name, progress),
+                _ => repo::submodule_init(&parent, &name, progress),
+            }
+            .map(|()| repo::SeqOutcome::Done);
             let _ = tx.send(RemoteMsg::Done(result.map_err(|e| e.to_string())));
             if gate.load(Ordering::Relaxed) {
                 ctx.request_repaint();
@@ -1870,11 +1947,41 @@ impl App {
         self.remote_task = None;
         self.remote_busy = false;
         self.remote_progress = None;
+        let rediscover = self.remote_kind.rediscovers();
+        if rediscover && res.is_ok() {
+            self.rediscover();
+        }
         self.after_commit_topology_change();
         match res {
             Ok(_) => self.error = None,
             Err(e) => self.error = Some(format!("{} failed: {e}", self.remote_kind.verb())),
         }
+    }
+
+    fn rediscover(&mut self) {
+        let mut expanded = Vec::new();
+        if let Some(root) = &self.root {
+            collect_expanded(root, &mut expanded);
+        }
+        match repo::discover(&self.watch_root) {
+            Ok(mut node) => {
+                for path in &expanded {
+                    set_node_expanded(&mut node, path);
+                }
+                self.root = Some(node);
+                if !self.selected_is_valid() {
+                    self.select_repo(self.watch_root.clone());
+                }
+            }
+            Err(e) => self.error = Some(format!("Cannot reload repositories: {e}")),
+        }
+    }
+
+    fn selected_is_valid(&self) -> bool {
+        self.root
+            .as_ref()
+            .map(|r| node_is_initialized(r, &self.selected))
+            .unwrap_or(false)
     }
 
     fn after_commit_topology_change(&mut self) {
@@ -1965,6 +2072,47 @@ fn hash_diff(rows: &[DiffRow]) -> u64 {
 
 fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn collect_expanded(node: &repo::RepoNode, out: &mut Vec<PathBuf>) {
+    if node.expanded {
+        out.push(node.path.clone());
+    }
+    for child in &node.children {
+        collect_expanded(child, out);
+    }
+}
+
+fn set_node_expanded(node: &mut repo::RepoNode, path: &Path) -> bool {
+    if node.path == path {
+        node.expanded = true;
+        return true;
+    }
+    node.children
+        .iter_mut()
+        .any(|c| set_node_expanded(c, path))
+}
+
+fn node_is_initialized(node: &repo::RepoNode, path: &Path) -> bool {
+    if node.path == path {
+        return node.initialized;
+    }
+    node.children.iter().any(|c| node_is_initialized(c, path))
+}
+
+fn find_submodule_parent(
+    node: &repo::RepoNode,
+    target: &Path,
+) -> Option<(PathBuf, String)> {
+    for child in &node.children {
+        if child.path == target {
+            return Some((node.path.clone(), child.name.clone()));
+        }
+        if let Some(found) = find_submodule_parent(child, target) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn empty_diff() -> FileDiff {

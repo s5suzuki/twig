@@ -1144,6 +1144,8 @@ fn remote_bar(app: &mut App, ui: &mut egui::Ui) {
                 crate::app::RemoteKind::Pull => "Pulling",
                 crate::app::RemoteKind::Push => "Pushing",
                 crate::app::RemoteKind::DeleteRemote => "Deleting",
+                crate::app::RemoteKind::SubmoduleInit => "Initializing submodule",
+                crate::app::RemoteKind::SubmoduleUpdate => "Updating submodule",
             };
             let text = match app.remote_progress {
                 Some((r, t)) if t > 0 => format!("{verb} {r}/{t}"),
@@ -1994,6 +1996,7 @@ fn marker_color(kind: StatusKind) -> egui::Color32 {
         StatusKind::Deleted => egui::Color32::from_rgb(0xff, 0x7b, 0x7b),
         StatusKind::Renamed => egui::Color32::from_rgb(0x6c, 0x9c, 0xff),
         StatusKind::Conflicted => egui::Color32::from_rgb(0xff, 0xb8, 0x6c),
+        StatusKind::Submodule => egui::Color32::from_rgb(0xc8, 0x9c, 0xff),
         _ => egui::Color32::from_gray(150),
     }
 }

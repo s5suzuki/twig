@@ -3,7 +3,7 @@ use std::path::Path;
 use git2::{
     ApplyLocation, ApplyOptions, Config, Cred, CredentialType, Diff, DiffOptions, ErrorCode,
     FetchOptions, Index, IndexAddOption, Oid, PushOptions, Rebase, RemoteCallbacks, Repository,
-    RepositoryState, Signature,
+    RepositoryState, Signature, Submodule, SubmoduleUpdateOptions,
 };
 
 pub fn stage(repo_path: &Path, paths: &[String]) -> Result<(), git2::Error> {
@@ -417,6 +417,68 @@ pub fn stash_apply(repo_path: &Path, index: usize) -> Result<(), git2::Error> {
 
 pub fn stash_drop(repo_path: &Path, index: usize) -> Result<(), git2::Error> {
     Repository::open(repo_path)?.stash_drop(index)
+}
+
+fn find_submodule<'a>(repo: &'a Repository, key: &str) -> Result<Submodule<'a>, git2::Error> {
+    if let Ok(sm) = repo.find_submodule(key) {
+        return Ok(sm);
+    }
+    if let Ok(subs) = repo.submodules() {
+        for sm in subs {
+            if sm.path().to_string_lossy() == key {
+                return repo.find_submodule(sm.name().unwrap_or(key));
+            }
+        }
+    }
+    repo.find_submodule(key)
+}
+
+fn submodule_update_options<'a, F: FnMut(usize, usize) + 'a>(
+    mut progress: F,
+) -> SubmoduleUpdateOptions<'a> {
+    let mut cbs = RemoteCallbacks::new();
+    cbs.credentials(credentials_cb);
+    cbs.transfer_progress(move |stats| {
+        progress(stats.received_objects(), stats.total_objects());
+        true
+    });
+    let mut fetch = FetchOptions::new();
+    fetch.remote_callbacks(cbs);
+    let mut opts = SubmoduleUpdateOptions::new();
+    opts.fetch(fetch);
+    opts
+}
+
+pub fn submodule_init<F: FnMut(usize, usize)>(
+    parent_path: &Path,
+    key: &str,
+    progress: F,
+) -> Result<(), git2::Error> {
+    let repo = Repository::open(parent_path)?;
+    let mut sm = find_submodule(&repo, key)?;
+    sm.init(false)?;
+    let mut opts = submodule_update_options(progress);
+    sm.update(true, Some(&mut opts))
+}
+
+pub fn submodule_update<F: FnMut(usize, usize)>(
+    parent_path: &Path,
+    key: &str,
+    progress: F,
+) -> Result<(), git2::Error> {
+    let repo = Repository::open(parent_path)?;
+    let mut sm = find_submodule(&repo, key)?;
+    let mut opts = submodule_update_options(progress);
+    sm.update(true, Some(&mut opts))
+}
+
+pub fn stage_submodule_pointer(parent_path: &Path, key: &str) -> Result<(), git2::Error> {
+    let repo = Repository::open(parent_path)?;
+    let sm = find_submodule(&repo, key)?;
+    let path = sm.path().to_string_lossy().into_owned();
+    let mut index = repo.index()?;
+    index.add_all([path].iter(), IndexAddOption::DEFAULT, None)?;
+    index.write()
 }
 
 fn drive_rebase(repo: &Repository, rebase: &mut Rebase) -> Result<SeqOutcome, git2::Error> {

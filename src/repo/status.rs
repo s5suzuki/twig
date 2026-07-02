@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use git2::{Repository, Status, StatusOptions};
@@ -10,6 +11,7 @@ pub enum StatusKind {
     Renamed,
     Typechange,
     Conflicted,
+    Submodule,
     Other,
 }
 
@@ -22,6 +24,7 @@ impl StatusKind {
             StatusKind::Renamed => 'R',
             StatusKind::Typechange => 'T',
             StatusKind::Conflicted => 'U',
+            StatusKind::Submodule => 'S',
             StatusKind::Other => '?',
         }
     }
@@ -38,6 +41,8 @@ pub fn load_status(path: &Path) -> Result<(Vec<StatusEntry>, Vec<StatusEntry>), 
 }
 
 fn collect_status(repo: &Repository) -> Result<(Vec<StatusEntry>, Vec<StatusEntry>), git2::Error> {
+    let submodules = submodule_paths(repo);
+
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
     let statuses = repo.statuses(Some(&mut opts))?;
@@ -47,6 +52,7 @@ fn collect_status(repo: &Repository) -> Result<(Vec<StatusEntry>, Vec<StatusEntr
     for entry in statuses.iter() {
         let path = entry.path().unwrap_or("").to_string();
         let s = entry.status();
+        let is_sub = submodules.contains(path.trim_end_matches('/'));
 
         if s.contains(Status::CONFLICTED) {
             unstaged.push(StatusEntry {
@@ -59,14 +65,27 @@ fn collect_status(repo: &Repository) -> Result<(Vec<StatusEntry>, Vec<StatusEntr
         if let Some(kind) = index_kind(s) {
             staged.push(StatusEntry {
                 path: path.clone(),
-                kind,
+                kind: if is_sub { StatusKind::Submodule } else { kind },
             });
         }
         if let Some(kind) = worktree_kind(s) {
-            unstaged.push(StatusEntry { path, kind });
+            unstaged.push(StatusEntry {
+                path,
+                kind: if is_sub { StatusKind::Submodule } else { kind },
+            });
         }
     }
     Ok((staged, unstaged))
+}
+
+fn submodule_paths(repo: &Repository) -> HashSet<String> {
+    let mut set = HashSet::new();
+    if let Ok(subs) = repo.submodules() {
+        for sm in subs {
+            set.insert(sm.path().to_string_lossy().into_owned());
+        }
+    }
+    set
 }
 
 fn index_kind(s: Status) -> Option<StatusKind> {

@@ -486,6 +486,29 @@ fn main() -> eframe::Result<()> {
             }
             return Ok(());
         }
+        Some(op @ ("--submodule-init" | "--submodule-update")) => {
+            let path = PathBuf::from(&args[2]);
+            let key = &args[3];
+            let progress = |recv: usize, total: usize| {
+                if total > 0 {
+                    eprint!("\rfetch {recv}/{total}");
+                }
+            };
+            let res = if op == "--submodule-init" {
+                repo::submodule_init(&path, key, progress)
+            } else {
+                repo::submodule_update(&path, key, progress)
+            };
+            eprintln!();
+            match res {
+                Ok(()) => {
+                    println!("OK: {op} {key}");
+                    dump(&path);
+                }
+                Err(e) => eprintln!("{op} failed: {e}"),
+            }
+            return Ok(());
+        }
         Some(op @ ("--stage" | "--unstage" | "--discard" | "--commit")) => {
             let path = PathBuf::from(&args[2]);
             let res = match op {
@@ -919,7 +942,18 @@ fn print_node(node: &repo::RepoNode, depth: usize) {
     } else {
         " (uninitialized)"
     };
-    println!("{indent}{}{tag}  [{}]", node.name, node.path.display());
+    let mut badges = String::new();
+    if node.drifted {
+        badges.push_str(" *drift");
+    }
+    if node.dirty {
+        badges.push_str(" *dirty");
+    }
+    println!(
+        "{indent}{}{tag}{badges}  [{}]",
+        node.name,
+        node.path.display()
+    );
     for child in &node.children {
         print_node(child, depth + 1);
     }
