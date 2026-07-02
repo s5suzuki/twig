@@ -474,6 +474,18 @@ fn main() -> eframe::Result<()> {
             }
             return Ok(());
         }
+        Some("--amend") => {
+            let path = PathBuf::from(&args[2]);
+            let msg = args.get(3).map(String::as_str);
+            match repo::amend(&path, msg) {
+                Ok(oid) => {
+                    println!("OK: --amend {oid}");
+                    dump(&path);
+                }
+                Err(e) => eprintln!("--amend failed: {e}"),
+            }
+            return Ok(());
+        }
         Some(op @ ("--stage" | "--unstage" | "--discard" | "--commit")) => {
             let path = PathBuf::from(&args[2]);
             let res = match op {

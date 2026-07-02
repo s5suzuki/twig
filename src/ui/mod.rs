@@ -62,27 +62,47 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
 
             let mut commit_clicked = false;
             let mut stash_clicked = false;
+            let can_amend = app.can_amend();
+            let mut amend_toggle: Option<bool> = None;
             egui::Panel::top("commit_box")
                 .resizable(false)
                 .show(ui, |ui| {
                     ui.add_space(4.0);
+                    let hint = if app.amend_mode {
+                        "Amend message"
+                    } else {
+                        "Commit message"
+                    };
                     ui.add(
                         egui::TextEdit::multiline(&mut app.commit_msg)
-                            .hint_text("Commit message")
+                            .hint_text(hint)
                             .desired_rows(2)
                             .desired_width(f32::INFINITY),
                     );
                     ui.horizontal(|ui| {
-                        commit_clicked = ui
-                            .button(format!("Commit ({} staged)", app.staged.len()))
-                            .clicked();
+                        let label = if app.amend_mode {
+                            format!("Amend ({} staged)", app.staged.len())
+                        } else {
+                            format!("Commit ({} staged)", app.staged.len())
+                        };
+                        commit_clicked = ui.button(label).clicked();
                         stash_clicked = ui
                             .button("\u{f187}  Stash")
                             .on_hover_text("Stash all changes (incl. untracked)")
                             .clicked();
+                        let mut amend = app.amend_mode;
+                        let cb = ui
+                            .add_enabled(can_amend, egui::Checkbox::new(&mut amend, "Amend"))
+                            .on_hover_text("Replace the last commit with the staged changes");
+                        if cb.changed() {
+                            amend_toggle = Some(amend);
+                        }
                     });
                     ui.add_space(4.0);
                 });
+            if let Some(on) = amend_toggle {
+                app.set_amend_mode(on);
+            }
             if stash_clicked {
                 app.stash_push();
             }
@@ -240,6 +260,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         Some(graph_view::GraphAction::InteractiveRebase(oid)) => {
                             app.interactive_rebase(oid)
                         }
+                        Some(graph_view::GraphAction::Amend) => app.begin_amend_from_graph(),
                         Some(graph_view::GraphAction::CherryPick(oid)) => {
                             app.confirm_op = Some((crate::app::GraphOp::CherryPick, oid))
                         }
@@ -453,6 +474,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     delete_ref_modal(app, ui);
     reset_modal(app, ui);
     confirm_op_modal(app, ui);
+    amend_confirm_modal(app, ui);
     search_confirm_modal(app, ui);
 
     draw_settings(app, ui.ctx());
@@ -848,6 +870,35 @@ fn confirm_op_modal(app: &mut App, ui: &mut egui::Ui) {
         app.run_confirmed_op();
     } else if cancel || resp.should_close() {
         app.confirm_op = None;
+    }
+}
+
+fn amend_confirm_modal(app: &mut App, ui: &mut egui::Ui) {
+    if !app.confirm_amend {
+        return;
+    }
+    let confirm_key = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let resp = egui::Modal::new(egui::Id::new("confirm_amend")).show(ui.ctx(), |ui| {
+        ui.set_width(380.0);
+        ui.heading("Amend pushed commit");
+        ui.add_space(6.0);
+        ui.label(
+            "HEAD matches its upstream. Amending rewrites a commit that already exists on the \
+             remote — you will need to force-push afterward.",
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let cancel = ui.button("Cancel (Esc)").clicked();
+            let go = ui.button("Amend (Enter)").clicked();
+            (go, cancel)
+        })
+        .inner
+    });
+    let (go, cancel) = resp.inner;
+    if go || confirm_key {
+        app.run_amend();
+    } else if cancel || resp.should_close() {
+        app.confirm_amend = false;
     }
 }
 

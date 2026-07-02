@@ -46,6 +46,7 @@ pub enum GraphAction {
     File(String),
     RebaseOnto(Oid),
     InteractiveRebase(Oid),
+    Amend,
     CherryPick(Oid),
     Revert(Oid),
     Switch(String),
@@ -395,6 +396,13 @@ fn build_menu_entries(
     }
 
     let mut entries: Vec<(String, GraphAction)> = Vec::new();
+    let is_head = row.is_some_and(|r| r.is_head);
+    if is_head {
+        entries.push((
+            "\u{f044}  Amend last commit\u{2026}".to_string(),
+            GraphAction::Amend,
+        ));
+    }
     if let Some(row) = row {
         for rf in &row.refs {
             match rf.kind {

@@ -11,10 +11,11 @@ pub use diff::{
 pub use discovery::{RepoNode, discover};
 pub use graph::{Graph, GraphRow, RefKind, RefLabel, Segment, build as build_graph};
 pub use ops::{
-    ResetMode, SeqOutcome, SeqState, StashEntry, checkout_branch, checkout_commit,
+    ResetMode, SeqOutcome, SeqState, StashEntry, amend, checkout_branch, checkout_commit,
     checkout_tracking, cherry_pick, cherry_pick_abort, cherry_pick_continue, commit,
     commit_parent_count, create_branch,
-    create_tag, delete_branch, delete_remote_branch, delete_tag, discard, fetch, head_push_refspec,
+    create_tag, delete_branch, delete_remote_branch, delete_tag, discard, fetch, head_has_commit,
+    head_is_pushed, head_message, head_push_refspec,
     merge_abort,
     merge_continue, primary_remote, pull, push, rebase_abort, rebase_continue, rebase_onto,
     remotes, rename_branch, reset, revert, revert_abort, revert_continue, seq_conflicts, seq_state,

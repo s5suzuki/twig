@@ -280,6 +280,9 @@ pub struct App {
     pub diff_scrolled_prev: bool,
     pub diff_visible: Option<(usize, usize)>,
     pub commit_msg: String,
+    pub amend_mode: bool,
+    saved_commit_msg: Option<String>,
+    pub confirm_amend: bool,
     pub active_tab: Tab,
 
     pub find: FindBar,
@@ -366,6 +369,9 @@ impl App {
             diff_scrolled_prev: false,
             diff_visible: None,
             commit_msg: String::new(),
+            amend_mode: false,
+            saved_commit_msg: None,
+            confirm_amend: false,
             active_tab: Tab::Graph,
             find: FindBar::default(),
             search: SearchState::default(),
@@ -426,6 +432,7 @@ impl App {
 
     pub fn select_repo(&mut self, path: PathBuf) {
         self.selected = path.clone();
+        self.reset_amend_mode();
         self.selected_file = None;
         self.clear_commit_selection();
         self.diff = empty_diff();
@@ -1316,6 +1323,7 @@ impl App {
             || self.confirm_delete.is_some()
             || self.reset_prompt.is_some()
             || self.confirm_op.is_some()
+            || self.confirm_amend
             || self.search_confirm
     }
 
@@ -1436,6 +1444,18 @@ impl App {
             self.error = Some("Commit message is empty".to_string());
             return;
         }
+        if self.amend_mode {
+            if !self.can_amend() {
+                self.error = Some("Cannot amend now".to_string());
+                return;
+            }
+            if repo::head_is_pushed(&self.selected) {
+                self.confirm_amend = true;
+            } else {
+                self.run_amend();
+            }
+            return;
+        }
         match repo::commit(&self.selected, self.commit_msg.trim()) {
             Ok(()) => {
                 self.commit_msg.clear();
@@ -1446,6 +1466,57 @@ impl App {
             }
             Err(e) => self.error = Some(format!("commit failed: {e}")),
         }
+    }
+
+    pub fn can_amend(&self) -> bool {
+        self.seq.is_none() && repo::head_has_commit(&self.selected)
+    }
+
+    pub fn set_amend_mode(&mut self, on: bool) {
+        if on == self.amend_mode {
+            return;
+        }
+        if on {
+            if !self.can_amend() {
+                self.error = Some("Nothing to amend".to_string());
+                return;
+            }
+            self.saved_commit_msg = Some(std::mem::take(&mut self.commit_msg));
+            self.commit_msg = repo::head_message(&self.selected)
+                .map(|m| m.trim_end().to_string())
+                .unwrap_or_default();
+            self.amend_mode = true;
+        } else {
+            self.commit_msg = self.saved_commit_msg.take().unwrap_or_default();
+            self.amend_mode = false;
+        }
+    }
+
+    fn reset_amend_mode(&mut self) {
+        self.amend_mode = false;
+        self.saved_commit_msg = None;
+        self.confirm_amend = false;
+    }
+
+    pub fn run_amend(&mut self) {
+        self.confirm_amend = false;
+        match repo::amend(&self.selected, Some(self.commit_msg.trim())) {
+            Ok(_) => {
+                self.commit_msg.clear();
+                self.saved_commit_msg = None;
+                self.amend_mode = false;
+                self.selected_file = None;
+                self.clear_commit_selection();
+                self.diff = empty_diff();
+                self.reload();
+            }
+            Err(e) => self.error = Some(format!("amend failed: {e}")),
+        }
+    }
+
+    pub fn begin_amend_from_graph(&mut self) {
+        self.focus = Pane::Changes;
+        self.set_amend_mode(true);
     }
 
     fn busy_with_seq(&mut self) -> bool {

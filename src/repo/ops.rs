@@ -475,6 +475,50 @@ pub fn commit(repo_path: &Path, message: &str) -> Result<(), git2::Error> {
     Ok(())
 }
 
+pub fn amend(repo_path: &Path, message: Option<&str>) -> Result<Oid, git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    let commit = repo.head()?.peel_to_commit()?;
+    let sig = repo.signature()?;
+    let mut index = repo.index()?;
+    let tree = repo.find_tree(index.write_tree()?)?;
+    commit.amend(Some("HEAD"), None, Some(&sig), None, message, Some(&tree))
+}
+
+pub fn head_message(repo_path: &Path) -> Option<String> {
+    let repo = Repository::open(repo_path).ok()?;
+    let commit = repo.head().ok()?.peel_to_commit().ok()?;
+    commit.message().ok().map(String::from)
+}
+
+pub fn head_has_commit(repo_path: &Path) -> bool {
+    let Ok(repo) = Repository::open(repo_path) else {
+        return false;
+    };
+    repo.head().and_then(|h| h.peel_to_commit()).is_ok()
+}
+
+pub fn head_is_pushed(repo_path: &Path) -> bool {
+    let Ok(repo) = Repository::open(repo_path) else {
+        return false;
+    };
+    let Ok(head) = repo.head() else {
+        return false;
+    };
+    if !head.is_branch() {
+        return false;
+    }
+    let Ok(name) = head.shorthand() else {
+        return false;
+    };
+    let Ok(branch) = repo.find_branch(name, git2::BranchType::Local) else {
+        return false;
+    };
+    match branch.upstream() {
+        Ok(upstream) => upstream.get().target() == head.target(),
+        Err(_) => false,
+    }
+}
+
 pub struct RemoteInfo {
     pub name: String,
     pub url: Option<String>,
