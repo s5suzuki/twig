@@ -1,16 +1,17 @@
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
+use notify_debouncer_mini::notify::event::{EventKind, ModifyKind};
+use notify_debouncer_mini::notify::{self, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
 pub struct WorktreeWatcher {
-    _debouncer: Debouncer<RecommendedWatcher>,
+    _watcher: RecommendedWatcher,
     dirty: Arc<AtomicBool>,
 }
 
@@ -21,25 +22,27 @@ impl WorktreeWatcher {
         repaint_gate: Arc<AtomicBool>,
     ) -> Result<Self, String> {
         let dirty = Arc::new(AtomicBool::new(false));
-        let dirty_cb = dirty.clone();
-        let ctx = ctx.clone();
         let gitignore = build_gitignore(root);
 
-        let mut debouncer = new_debouncer(DEBOUNCE, move |res: DebounceEventResult| {
-            let Ok(events) = res else { return };
-            if events.iter().any(|e| !is_ignored(&gitignore, &e.path)) {
-                dirty_cb.store(true, Ordering::Relaxed);
-                if repaint_gate.load(Ordering::Relaxed) {
-                    ctx.request_repaint();
-                }
+        let (tx, rx) = mpsc::channel::<()>();
+        spawn_debounce(rx, dirty.clone(), ctx.clone(), repaint_gate);
+
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
+            let Ok(event) = res else { return };
+            if !is_change(&event.kind) {
+                return;
             }
+            if event.paths.iter().all(|p| is_ignored(&gitignore, p)) {
+                return;
+            }
+            let _ = tx.send(());
         })
         .map_err(|e| format!("Failed to initialize file watcher: {e}"))?;
 
-        watch_worktree(debouncer.watcher(), root)?;
+        watch_worktree(&mut watcher, root)?;
 
         Ok(Self {
-            _debouncer: debouncer,
+            _watcher: watcher,
             dirty,
         })
     }
@@ -47,6 +50,33 @@ impl WorktreeWatcher {
     pub fn take_dirty(&self) -> bool {
         self.dirty.swap(false, Ordering::Relaxed)
     }
+}
+
+fn is_change(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::Create(_)
+            | EventKind::Remove(_)
+            | EventKind::Modify(ModifyKind::Data(_))
+            | EventKind::Modify(ModifyKind::Name(_))
+    )
+}
+
+fn spawn_debounce(
+    rx: mpsc::Receiver<()>,
+    dirty: Arc<AtomicBool>,
+    ctx: egui::Context,
+    repaint_gate: Arc<AtomicBool>,
+) {
+    std::thread::spawn(move || {
+        while rx.recv().is_ok() {
+            while rx.recv_timeout(DEBOUNCE).is_ok() {}
+            dirty.store(true, Ordering::Relaxed);
+            if repaint_gate.load(Ordering::Relaxed) {
+                ctx.request_repaint();
+            }
+        }
+    });
 }
 
 fn watch_worktree(watcher: &mut dyn Watcher, root: &Path) -> Result<(), String> {
