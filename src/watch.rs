@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
@@ -36,10 +36,7 @@ impl WorktreeWatcher {
         })
         .map_err(|e| format!("Failed to initialize file watcher: {e}"))?;
 
-        debouncer
-            .watcher()
-            .watch(root, RecursiveMode::Recursive)
-            .map_err(|e| format!("Failed to start file watcher: {e}"))?;
+        watch_worktree(debouncer.watcher(), root)?;
 
         Ok(Self {
             _debouncer: debouncer,
@@ -50,6 +47,30 @@ impl WorktreeWatcher {
     pub fn take_dirty(&self) -> bool {
         self.dirty.swap(false, Ordering::Relaxed)
     }
+}
+
+fn watch_worktree(watcher: &mut dyn Watcher, root: &Path) -> Result<(), String> {
+    watcher
+        .watch(root, RecursiveMode::NonRecursive)
+        .map_err(|e| format!("Failed to start file watcher: {e}"))?;
+
+    let gitignore = build_gitignore(root);
+    let entries = std::fs::read_dir(root).map_err(|e| format!("Failed to read repo root: {e}"))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        if path.file_name().and_then(|n| n.to_str()) == Some(".git")
+            || is_ignored(&gitignore, &path)
+        {
+            continue;
+        }
+        watcher
+            .watch(&path, RecursiveMode::Recursive)
+            .map_err(|e| format!("Failed to watch {}: {e}", path.display()))?;
+    }
+    Ok(())
 }
 
 fn build_gitignore(root: &Path) -> Gitignore {
