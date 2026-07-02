@@ -65,6 +65,7 @@ pub enum Action {
     DiffHalfPageUp,
     DiffPageDown,
     DiffPageUp,
+    DiffEditor,
 
     ChangesTop,
     ChangesBottom,
@@ -139,6 +140,7 @@ impl Action {
         (Action::DiffHalfPageUp, "diff-half-page-up", "Scroll half a page up"),
         (Action::DiffPageDown, "diff-page-down", "Scroll one page down"),
         (Action::DiffPageUp, "diff-page-up", "Scroll one page up"),
+        (Action::DiffEditor, "diff-editor", "Open the current file in the editor"),
         (Action::ChangesTop, "changes-top", "Move cursor to the top"),
         (Action::ChangesBottom, "changes-bottom", "Move cursor to the bottom"),
         (Action::ChangesDown, "changes-down", "Move cursor down"),
@@ -388,6 +390,7 @@ impl Keymap {
         km.push(Diff, ctrl, U, DiffHalfPageUp);
         km.push(Diff, ctrl, F, DiffPageDown);
         km.push(Diff, ctrl, B, DiffPageUp);
+        km.push(Diff, n, E, DiffEditor);
 
         km.push_seq(Changes, Chord::new(n, G), Chord::new(n, G), ChangesTop);
         km.push(Changes, shift, G, ChangesBottom);

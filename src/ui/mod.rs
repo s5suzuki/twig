@@ -1386,6 +1386,11 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
             Action::DiffHalfPageUp => app.scroll_diff(0.5, false),
             Action::DiffPageDown => app.scroll_diff(1.0, true),
             Action::DiffPageUp => app.scroll_diff(1.0, false),
+            Action::DiffEditor => {
+                if let Some((path, _)) = app.selected_file.clone() {
+                    app.open_in_editor(&path);
+                }
+            }
             _ => {}
         }
     }
