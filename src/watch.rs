@@ -42,6 +42,7 @@ impl WorktreeWatcher {
         .map_err(|e| format!("Failed to initialize file watcher: {e}"))?;
 
         let watched_top = watch_worktree(&mut watcher, root)?;
+        watch_git_dir(&mut watcher, root);
 
         Ok(Self {
             watcher,
@@ -140,6 +141,25 @@ fn watch_worktree(watcher: &mut dyn Watcher, root: &Path) -> Result<HashSet<Path
     Ok(watched_top)
 }
 
+fn watch_git_dir(watcher: &mut dyn Watcher, root: &Path) {
+    let Some(git_dir) = resolve_git_dir(root) else {
+        return;
+    };
+    let _ = watcher.watch(&git_dir, RecursiveMode::NonRecursive);
+    let refs = git_dir.join("refs");
+    if refs.is_dir() {
+        let _ = watcher.watch(&refs, RecursiveMode::Recursive);
+    }
+}
+
+fn resolve_git_dir(root: &Path) -> Option<PathBuf> {
+    if let Ok(repo) = git2::Repository::open(root) {
+        return Some(repo.path().to_path_buf());
+    }
+    let dot = root.join(".git");
+    dot.is_dir().then_some(dot)
+}
+
 fn build_gitignore(root: &Path) -> Gitignore {
     let mut b = GitignoreBuilder::new(root);
     let _ = b.add(root.join(".gitignore"));
@@ -150,7 +170,7 @@ fn build_gitignore(root: &Path) -> Gitignore {
 
 fn is_ignored(gitignore: &Gitignore, path: &Path) -> bool {
     if path.components().any(|c| c.as_os_str() == ".git") {
-        return true;
+        return !is_interesting_git_path(path);
     }
     if gitignore
         .matched_path_or_any_parents(path, path.is_dir())
@@ -169,6 +189,32 @@ fn is_ignored(gitignore: &Gitignore, path: &Path) -> bool {
         || name.ends_with(".swx")
         || name.ends_with(".un~")
         || name.ends_with(".tmp")
+}
+
+fn is_interesting_git_path(path: &Path) -> bool {
+    if path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".lock"))
+    {
+        return false;
+    }
+    let mut after_git = false;
+    for c in path.components() {
+        if after_git {
+            return matches!(
+                c.as_os_str().to_str(),
+                Some(
+                    "refs" | "HEAD" | "ORIG_HEAD" | "MERGE_HEAD" | "FETCH_HEAD" | "index"
+                        | "packed-refs"
+                )
+            );
+        }
+        if c.as_os_str() == ".git" {
+            after_git = true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -237,6 +283,64 @@ mod tests {
         std::fs::remove_dir_all(tmp.join("newdir")).unwrap();
         w.rescan_new_toplevel(&tmp);
         assert!(!w.watched_top.contains(&tmp.join("newdir")), "deleted dir must be pruned");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn interesting_git_paths_pass_churn_paths_dropped() {
+        let root = Path::new("/repo");
+        for p in [
+            ".git/HEAD",
+            ".git/index",
+            ".git/packed-refs",
+            ".git/ORIG_HEAD",
+            ".git/MERGE_HEAD",
+            ".git/FETCH_HEAD",
+            ".git/refs/heads/main",
+            ".git/refs/tags/v1",
+            ".git/refs/remotes/origin/main",
+        ] {
+            assert!(is_interesting_git_path(&root.join(p)), "{p} should pass");
+        }
+        for p in [
+            ".git/objects/ab/cdef",
+            ".git/logs/HEAD",
+            ".git/logs/refs/heads/main",
+            ".git/modules/sub/refs/heads/main",
+            ".git/index.lock",
+            ".git/refs/heads/main.lock",
+            ".git/COMMIT_EDITMSG",
+        ] {
+            assert!(!is_interesting_git_path(&root.join(p)), "{p} should be dropped");
+        }
+    }
+
+    #[test]
+    fn detects_external_ref_update_but_not_objects_or_logs() {
+        let tmp = std::env::temp_dir().join(format!("twig-gitwatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        git2::Repository::init(&tmp).unwrap();
+        let git = tmp.join(".git");
+        std::fs::create_dir_all(git.join("logs")).unwrap();
+        std::fs::create_dir_all(git.join("objects/ab")).unwrap();
+
+        let ctx = egui::Context::default();
+        let w = WorktreeWatcher::new(&tmp, &ctx, Arc::new(AtomicBool::new(false))).unwrap();
+
+        std::thread::sleep(Duration::from_millis(400));
+        let _ = w.take_dirty();
+
+        std::fs::write(git.join("logs/HEAD"), "x\n").unwrap();
+        std::fs::write(git.join("objects/ab/deadbeef"), "x\n").unwrap();
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(!w.take_dirty(), "objects/logs churn must not wake the watcher");
+
+        std::fs::write(git.join("refs/heads/main"), "0000000000000000000000000000000000000000\n")
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(w.take_dirty(), "external ref update must be detected");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
