@@ -500,6 +500,9 @@ impl App {
     }
 
     pub fn refresh_from_disk(&mut self) {
+        if let Some(w) = self.watcher.as_mut() {
+            w.rescan_new_toplevel(&self.watch_root);
+        }
         self.after_index_change();
     }
 
