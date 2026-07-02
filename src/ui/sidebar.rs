@@ -69,6 +69,7 @@ fn sidebar_nav(app: &mut App, ui: &mut egui::Ui, rows: &[SideRow]) -> Option<Nav
     }
     if app.focus != Pane::Sidebar
         || app.help_open
+        || app.any_modal_open()
         || ui.ctx().memory(|m| m.focused().is_some())
     {
         return None;

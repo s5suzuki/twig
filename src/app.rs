@@ -309,6 +309,7 @@ pub struct App {
     pub stashes: Vec<repo::StashEntry>,
     pub ref_prompt: Option<RefPrompt>,
     pub name_input: String,
+    pub name_input_focus: bool,
     pub confirm_delete: Option<DeleteTarget>,
     pub reset_prompt: Option<Oid>,
     pub confirm_op: Option<(GraphOp, Oid)>,
@@ -389,6 +390,7 @@ impl App {
             stashes: Vec::new(),
             ref_prompt: None,
             name_input: String::new(),
+            name_input_focus: false,
             confirm_delete: None,
             reset_prompt: None,
             confirm_op: None,
@@ -1495,16 +1497,19 @@ impl App {
             return;
         }
         self.name_input = String::new();
+        self.name_input_focus = true;
         self.ref_prompt = Some(RefPrompt::CreateBranch { at });
     }
 
     pub fn begin_rename_branch(&mut self, from: String) {
         self.name_input = from.clone();
+        self.name_input_focus = true;
         self.ref_prompt = Some(RefPrompt::RenameBranch { from });
     }
 
     pub fn begin_create_tag(&mut self, at: Oid) {
         self.name_input = String::new();
+        self.name_input_focus = true;
         self.ref_prompt = Some(RefPrompt::CreateTag { at });
     }
 

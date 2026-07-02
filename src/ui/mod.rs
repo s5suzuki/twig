@@ -23,7 +23,7 @@ enum Action {
 pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     app.track_nav();
     help_key(app, ui);
-    if !app.help_open {
+    if !app.help_open && !app.any_modal_open() {
         handle_global_keys(app, ui);
         diff_keys(app, ui);
     }
@@ -544,7 +544,10 @@ fn ref_prompt_modal(app: &mut App, ui: &mut egui::Ui) {
                 .hint_text(hint)
                 .desired_width(f32::INFINITY),
         );
-        edit.request_focus();
+        if app.name_input_focus {
+            edit.request_focus();
+            app.name_input_focus = false;
+        }
         let submit = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -1291,12 +1294,7 @@ fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
     }
 
     if app.help_open
-        || app.confirm_discard.is_some()
-        || app.ref_prompt.is_some()
-        || app.confirm_delete.is_some()
-        || app.reset_prompt.is_some()
-        || app.confirm_op.is_some()
-        || app.settings_open
+        || app.any_modal_open()
         || ui.ctx().memory(|m| m.focused().is_some())
     {
         return false;
@@ -1573,7 +1571,7 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
     }
     if app.focus != Pane::Changes
         || app.help_open
-        || app.confirm_discard.is_some()
+        || app.any_modal_open()
         || ui.ctx().memory(|m| m.focused().is_some())
     {
         return None;
