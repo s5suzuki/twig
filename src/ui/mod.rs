@@ -175,6 +175,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
 
             match app.active_tab {
                 Tab::Graph => {
+                    let ctx = ui.ctx().clone();
                     let graph_focused = app.focus == Pane::RightTab;
                     let open_menu = if graph_focused {
                         graph_keys(app, ui)
@@ -271,6 +272,9 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         Some(graph_view::GraphAction::StashPop(i)) => app.stash_pop(i),
                         Some(graph_view::GraphAction::StashApply(i)) => app.stash_apply(i),
                         Some(graph_view::GraphAction::StashDrop(i)) => app.stash_drop(i),
+                        Some(graph_view::GraphAction::Push) => app.push(&ctx, false),
+                        Some(graph_view::GraphAction::ForcePush) => app.push(&ctx, true),
+                        Some(graph_view::GraphAction::Fetch) => app.fetch(&ctx),
                         None => {}
                     }
                 }
@@ -1228,6 +1232,7 @@ fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
     }
 
     app.clamp_graph_cursor();
+    let ctx = ui.ctx().clone();
     let page = crate::app::LIST_PAGE as isize;
     let mut open_menu = false;
     let actions = app
@@ -1285,6 +1290,9 @@ fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
                     app.interactive_rebase(oid);
                 }
             }
+            Action::GraphPush => app.push(&ctx, false),
+            Action::GraphFetch => app.fetch(&ctx),
+            Action::GraphPull => app.pull(&ctx),
             _ => {}
         }
     }

@@ -61,6 +61,9 @@ pub enum GraphAction {
     StashPop(usize),
     StashApply(usize),
     StashDrop(usize),
+    Push,
+    ForcePush,
+    Fetch,
 }
 
 fn parse_stash_index(name: &str) -> Option<usize> {
@@ -450,6 +453,9 @@ fn build_menu_entries(
         "\u{f0e2}  Reset current branch to here\u{2026}".to_string(),
         GraphAction::OpenReset(oid),
     ));
+    entries.push(("\u{f021}  Fetch".to_string(), GraphAction::Fetch));
+    entries.push(("\u{f0aa}  Push".to_string(), GraphAction::Push));
+    entries.push(("\u{f0aa}  Force push".to_string(), GraphAction::ForcePush));
 
     let short = oid.to_string();
     (format!("commit {}", &short[..7.min(short.len())]), entries)

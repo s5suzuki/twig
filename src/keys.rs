@@ -97,6 +97,9 @@ pub enum Action {
     GraphRebaseOnto,
     GraphRebaseInteractive,
     GraphCheckout,
+    GraphPush,
+    GraphFetch,
+    GraphPull,
 }
 
 impl Action {
@@ -164,6 +167,9 @@ impl Action {
         (Action::GraphRebaseOnto, "graph-rebase-onto"),
         (Action::GraphRebaseInteractive, "graph-rebase-interactive"),
         (Action::GraphCheckout, "graph-checkout"),
+        (Action::GraphPush, "graph-push"),
+        (Action::GraphFetch, "graph-fetch"),
+        (Action::GraphPull, "graph-pull"),
     ];
 
     fn from_name(s: &str) -> Option<Action> {
@@ -347,6 +353,8 @@ impl Keymap {
         km.push(Graph, shift, B, GraphRebaseOnto);
         km.push(Graph, n, I, GraphRebaseInteractive);
         km.push(Graph, n, O, GraphCheckout);
+        km.push(Graph, n, P, GraphPush);
+        km.push(Graph, n, F, GraphFetch);
 
         km
     }
