@@ -8,6 +8,7 @@ pub enum Context {
     Sidebar,
     Changes,
     Diff,
+    Graph,
 }
 
 impl Context {
@@ -21,6 +22,7 @@ impl Context {
             "sidebar" => Context::Sidebar,
             "changes" => Context::Changes,
             "diff" => Context::Diff,
+            "graph" => Context::Graph,
             _ => return None,
         })
     }
@@ -76,6 +78,17 @@ pub enum Action {
     SidebarCollapse,
     SidebarHalfPageDown,
     SidebarHalfPageUp,
+
+    GraphDown,
+    GraphUp,
+    GraphTop,
+    GraphBottom,
+    GraphHalfPageDown,
+    GraphHalfPageUp,
+    GraphOpen,
+    GraphEditor,
+    GraphCollapse,
+    GraphContextMenu,
 }
 
 impl Action {
@@ -125,6 +138,16 @@ impl Action {
         (Action::SidebarCollapse, "sidebar-collapse"),
         (Action::SidebarHalfPageDown, "sidebar-half-page-down"),
         (Action::SidebarHalfPageUp, "sidebar-half-page-up"),
+        (Action::GraphDown, "graph-down"),
+        (Action::GraphUp, "graph-up"),
+        (Action::GraphTop, "graph-top"),
+        (Action::GraphBottom, "graph-bottom"),
+        (Action::GraphHalfPageDown, "graph-half-page-down"),
+        (Action::GraphHalfPageUp, "graph-half-page-up"),
+        (Action::GraphOpen, "graph-open"),
+        (Action::GraphEditor, "graph-editor"),
+        (Action::GraphCollapse, "graph-collapse"),
+        (Action::GraphContextMenu, "graph-context-menu"),
     ];
 
     fn from_name(s: &str) -> Option<Action> {
@@ -192,7 +215,7 @@ struct Binding {
 }
 
 pub struct Keymap {
-    maps: [Vec<Binding>; 4],
+    maps: [Vec<Binding>; 5],
 }
 
 impl Keymap {
@@ -230,7 +253,13 @@ impl Keymap {
         let shift = Modifiers::SHIFT;
         let ctrl = Modifiers::CTRL;
         let mut km = Keymap {
-            maps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            maps: [
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ],
         };
 
         km.push(Global, alt, H, FocusLeft);
@@ -281,6 +310,19 @@ impl Keymap {
         km.push(Sidebar, n, H, SidebarCollapse);
         km.push(Sidebar, ctrl, D, SidebarHalfPageDown);
         km.push(Sidebar, ctrl, U, SidebarHalfPageUp);
+
+        km.push(Graph, n, J, GraphDown);
+        km.push(Graph, n, K, GraphUp);
+        km.push_seq(Graph, Chord::new(n, G), Chord::new(n, G), GraphTop);
+        km.push(Graph, shift, G, GraphBottom);
+        km.push(Graph, ctrl, D, GraphHalfPageDown);
+        km.push(Graph, ctrl, U, GraphHalfPageUp);
+        km.push(Graph, n, L, GraphOpen);
+        km.push(Graph, n, Enter, GraphOpen);
+        km.push(Graph, n, E, GraphEditor);
+        km.push(Graph, n, H, GraphCollapse);
+        km.push(Graph, ctrl, Period, GraphContextMenu);
+        km.push_seq(Graph, Chord::new(n, Space), Chord::new(n, Period), GraphContextMenu);
 
         km
     }

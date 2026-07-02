@@ -192,6 +192,18 @@ pub enum DeleteTarget {
     RemoteBranch(String),
 }
 
+#[derive(Clone, Copy)]
+pub enum GraphItem {
+    Commit(usize),
+    File(usize),
+}
+
+pub struct GraphMenu {
+    pub oid: Oid,
+    pub pos: egui::Pos2,
+    pub cursor: usize,
+}
+
 #[derive(Clone, PartialEq)]
 enum NavSel {
     None,
@@ -258,6 +270,9 @@ pub struct App {
     pub focus: Pane,
     pub changes_cursor: usize,
     pub sidebar_cursor: usize,
+    pub graph_cursor: usize,
+    pub graph_scroll_pending: bool,
+    pub graph_menu: Option<GraphMenu>,
     pub keymap: Keymap,
     pub pending_prefix: Option<Chord>,
     pub confirm_discard: Option<String>,
@@ -334,6 +349,9 @@ impl App {
             focus: Pane::Changes,
             changes_cursor: 0,
             sidebar_cursor: 0,
+            graph_cursor: 0,
+            graph_scroll_pending: false,
+            graph_menu: None,
             keymap,
             pending_prefix: None,
             confirm_discard: None,
@@ -380,6 +398,8 @@ impl App {
         self.nav_back.clear();
         self.nav_fwd.clear();
         self.nav_current = None;
+        self.graph_cursor = 0;
+        self.graph_menu = None;
         self.reload();
     }
 
@@ -914,6 +934,139 @@ impl App {
         self.diff_ver = self.diff_ver.wrapping_add(1);
         self.reset_diff_nav();
         self.active_tab = Tab::Diff;
+    }
+
+    pub fn graph_items(&self) -> Vec<GraphItem> {
+        let sel = self.selected_commit.as_ref().map(|(o, _)| *o);
+        let mut out = Vec::with_capacity(self.graph.rows.len());
+        for (i, row) in self.graph.rows.iter().enumerate() {
+            out.push(GraphItem::Commit(i));
+            if Some(row.id) == sel {
+                for k in 0..self.commit_files.len() {
+                    out.push(GraphItem::File(k));
+                }
+            }
+        }
+        out
+    }
+
+    pub fn clamp_graph_cursor(&mut self) {
+        let n = self.graph_items().len();
+        if n == 0 {
+            self.graph_cursor = 0;
+        } else if self.graph_cursor >= n {
+            self.graph_cursor = n - 1;
+        }
+    }
+
+    fn parent_commit_item(&self, items: &[GraphItem], from: usize) -> Option<usize> {
+        (0..=from.min(items.len().saturating_sub(1)))
+            .rev()
+            .find(|&i| matches!(items[i], GraphItem::Commit(_)))
+    }
+
+    pub fn move_graph_cursor(&mut self, delta: isize) {
+        let n = self.graph_items().len();
+        if n == 0 {
+            return;
+        }
+        let last = (n - 1) as isize;
+        let cur = self.graph_cursor.min(n - 1) as isize;
+        self.graph_cursor = (cur + delta).clamp(0, last) as usize;
+        self.graph_scroll_pending = true;
+    }
+
+    pub fn set_graph_cursor(&mut self, idx: usize) {
+        let n = self.graph_items().len();
+        if n == 0 {
+            return;
+        }
+        self.graph_cursor = idx.min(n - 1);
+        self.graph_scroll_pending = true;
+    }
+
+    pub fn graph_cursor_bottom(&mut self) {
+        let n = self.graph_items().len();
+        if n > 0 {
+            self.graph_cursor = n - 1;
+            self.graph_scroll_pending = true;
+        }
+    }
+
+    pub fn set_graph_cursor_to_commit(&mut self, oid: Oid) {
+        if let Some(idx) = self
+            .graph_items()
+            .iter()
+            .position(|it| matches!(it, GraphItem::Commit(row) if self.graph.rows[*row].id == oid))
+        {
+            self.graph_cursor = idx;
+        }
+    }
+
+    pub fn set_graph_cursor_to_file(&mut self, path: &str) {
+        if let Some(idx) = self.graph_items().iter().position(|it| {
+            matches!(it, GraphItem::File(k) if self.commit_files.get(*k).is_some_and(|f| f.path == path))
+        }) {
+            self.graph_cursor = idx;
+            self.graph_scroll_pending = true;
+        }
+    }
+
+    pub fn graph_activate(&mut self) {
+        let items = self.graph_items();
+        let Some(&item) = items.get(self.graph_cursor) else {
+            return;
+        };
+        match item {
+            GraphItem::Commit(row) => {
+                let oid = self.graph.rows[row].id;
+                let already = self.selected_commit.as_ref().is_some_and(|(o, _)| *o == oid);
+                if !already {
+                    self.load_commit(oid);
+                    self.set_graph_cursor_to_commit(oid);
+                }
+            }
+            GraphItem::File(k) => {
+                if let Some(f) = self.commit_files.get(k) {
+                    let path = f.path.clone();
+                    self.select_commit_file(path);
+                }
+            }
+        }
+        self.graph_scroll_pending = true;
+    }
+
+    pub fn graph_open_editor(&mut self) {
+        let items = self.graph_items();
+        if let Some(GraphItem::File(k)) = items.get(self.graph_cursor).copied()
+            && let Some(f) = self.commit_files.get(k)
+        {
+            let path = f.path.clone();
+            self.open_in_editor(&path);
+        }
+    }
+
+    pub fn graph_collapse(&mut self) {
+        let items = self.graph_items();
+        let Some(&item) = items.get(self.graph_cursor) else {
+            return;
+        };
+        match item {
+            GraphItem::File(_) => {
+                if let Some(ci) = self.parent_commit_item(&items, self.graph_cursor) {
+                    self.graph_cursor = ci;
+                    self.graph_scroll_pending = true;
+                }
+            }
+            GraphItem::Commit(row) => {
+                let oid = self.graph.rows[row].id;
+                if self.selected_commit.as_ref().is_some_and(|(o, _)| *o == oid) {
+                    self.clear_commit_selection();
+                    self.diff = empty_diff();
+                    self.diff_ver = self.diff_ver.wrapping_add(1);
+                }
+            }
+        }
     }
 
     fn current_nav_point(&self) -> NavPoint {

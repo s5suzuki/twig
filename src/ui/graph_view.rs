@@ -1,6 +1,7 @@
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, UiBuilder, pos2, vec2};
 use git2::Oid;
 
+use crate::app::GraphMenu;
 use crate::repo::{CommitFile, Graph, RefKind, RefLabel, ResetMode, Segment, StatusKind};
 
 const HEAD_COLOR: Color32 = Color32::from_rgb(0xff, 0xd1, 0x6b);
@@ -39,6 +40,7 @@ fn kind_color(kind: StatusKind) -> Color32 {
     }
 }
 
+#[derive(Clone)]
 pub enum GraphAction {
     Commit(Oid),
     File(String),
@@ -68,6 +70,13 @@ fn parse_stash_index(name: &str) -> Option<usize> {
         .ok()
 }
 
+pub struct GraphCursor {
+    pub commit_row: Option<usize>,
+    pub file: Option<usize>,
+    pub scroll: bool,
+    pub open_menu: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     graph: &Graph,
@@ -78,6 +87,8 @@ pub fn draw(
     sel_file: Option<&str>,
     show_author: bool,
     show_date: bool,
+    cursor: Option<&GraphCursor>,
+    menu: &mut Option<GraphMenu>,
 ) -> Option<GraphAction> {
     if graph.rows.is_empty() {
         ui.weak("(no commits)");
@@ -126,10 +137,14 @@ pub fn draw(
     let sel_bg = ui.visuals().selection.bg_fill;
     let hover_bg = ui.visuals().widgets.hovered.weak_bg_fill;
     let detail_bg = ui.visuals().faint_bg_color;
+    let cursor_stroke = Stroke::new(1.5, ui.visuals().selection.stroke.color);
     let hover_pos = resp.hover_pos();
+    let cursor_commit = cursor.and_then(|c| c.commit_row);
+    let cursor_file = cursor.and_then(|c| c.file);
 
     let mut commit_hits: Vec<(f32, f32, Oid)> = Vec::new();
     let mut file_hits: Vec<(f32, f32, String)> = Vec::new();
+    let mut cursor_rect: Option<Rect> = None;
 
     let mut y = rect.top();
     for (i, row) in graph.rows.iter().enumerate() {
@@ -147,6 +162,10 @@ pub fn draw(
             painter.rect_filled(commit_band, 0.0, sel_bg);
         } else if hover_pos.is_some_and(|p| commit_band.contains(p)) {
             painter.rect_filled(commit_band, 0.0, hover_bg);
+        }
+        if cursor_commit == Some(i) {
+            painter.rect_stroke(commit_band, 0.0, cursor_stroke, StrokeKind::Inside);
+            cursor_rect = Some(commit_band);
         }
 
         for seg in &row.segments {
@@ -243,6 +262,10 @@ pub fn draw(
                 } else if hover_pos.is_some_and(|p| fr.contains(p)) {
                     painter.rect_filled(fr, 0.0, hover_bg);
                 }
+                if cursor_file == Some(k) {
+                    painter.rect_stroke(fr, 0.0, cursor_stroke, StrokeKind::Inside);
+                    cursor_rect = Some(fr);
+                }
                 let fy_mid = fy + FILE_H / 2.0;
                 let mx = rect.left() + gutter + 6.0;
                 painter.text(
@@ -273,148 +296,55 @@ pub fn draw(
         y = y_bot;
     }
 
-    let menu_id = egui::Id::new("graph_menu_target");
-    if resp.secondary_clicked()
-        && let Some(p) = resp.interact_pointer_pos() {
-            let hit = commit_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b);
-            ui.ctx()
-                .data_mut(|d| d.insert_temp(menu_id, hit.map(|(_, _, oid)| *oid)));
+    if cursor.is_some_and(|c| c.scroll)
+        && let Some(r) = cursor_rect
+    {
+        ui.scroll_to_rect(r, None);
+    }
+
+    let kb_open = cursor.is_some_and(|c| c.open_menu);
+    if kb_open {
+        let kb_oid = cursor_commit
+            .map(|i| graph.rows[i].id)
+            .or(if cursor_file.is_some() { selected } else { None });
+        if let (Some(oid), Some(r)) = (kb_oid, cursor_rect) {
+            *menu = Some(GraphMenu {
+                oid,
+                pos: pos2(r.left() + gutter, r.bottom()),
+                cursor: 0,
+            });
         }
+    } else if resp.secondary_clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+        && let Some((_, _, oid)) = commit_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b)
+    {
+        *menu = Some(GraphMenu {
+            oid: *oid,
+            pos: p,
+            cursor: 0,
+        });
+    }
 
     let mut menu_action = None;
-    resp.context_menu(|ui| {
-        let target: Option<Oid> = ui.ctx().data(|d| d.get_temp(menu_id)).flatten();
-        let Some(oid) = target else {
-            ui.close();
-            return;
-        };
+    if let Some((oid, pos, mut sel)) = menu.as_ref().map(|gm| (gm.oid, gm.pos, gm.cursor)) {
         let row = graph.rows.iter().find(|r| r.id == oid);
-
-        if let Some(stash) = row.and_then(|r| r.refs.iter().find(|x| x.kind == RefKind::Stash)) {
-            if let Some(idx) = parse_stash_index(&stash.name) {
-                ui.label(&stash.name);
-                ui.separator();
-                if ui.button("\u{f0ab}  Pop (apply + drop)").clicked() {
-                    menu_action = Some(GraphAction::StashPop(idx));
-                    ui.close();
-                }
-                if ui.button("\u{f0c5}  Apply (keep)").clicked() {
-                    menu_action = Some(GraphAction::StashApply(idx));
-                    ui.close();
-                }
-                if ui.button("\u{f1f8}  Drop").clicked() {
-                    menu_action = Some(GraphAction::StashDrop(idx));
-                    ui.close();
-                }
-            }
-            return;
+        let (header, entries) = build_menu_entries(oid, row);
+        let popup_id = ui.make_persistent_id("graph_context_menu");
+        let mut open = true;
+        let mut close = false;
+        let inner = egui::Popup::menu(&resp)
+            .id(popup_id)
+            .at_position(pos)
+            .layout(egui::Layout::top_down(egui::Align::Min))
+            .open_bool(&mut open)
+            .show(|ui| draw_menu(ui, &header, &entries, &mut sel, &mut close));
+        menu_action = inner.and_then(|i| i.inner);
+        if !open || close || menu_action.is_some() {
+            *menu = None;
+        } else if let Some(gm) = menu.as_mut() {
+            gm.cursor = sel;
         }
-
-        let short = oid.to_string();
-        ui.label(format!("commit {}", &short[..7.min(short.len())]));
-        ui.separator();
-
-        if let Some(row) = row {
-            for rf in &row.refs {
-                match rf.kind {
-                    RefKind::LocalBranch => {
-                        if !rf.is_head
-                            && ui
-                                .button(format!("\u{e725}  Switch to {}", rf.name))
-                                .clicked()
-                        {
-                            menu_action = Some(GraphAction::Switch(rf.name.clone()));
-                            ui.close();
-                        }
-                        if ui
-                            .button(format!("\u{f044}  Rename {}\u{2026}", rf.name))
-                            .clicked()
-                        {
-                            menu_action = Some(GraphAction::RenameBranch(rf.name.clone()));
-                            ui.close();
-                        }
-                        if !rf.is_head
-                            && ui.button(format!("\u{f1f8}  Delete {}", rf.name)).clicked()
-                        {
-                            menu_action = Some(GraphAction::DeleteBranch(rf.name.clone()));
-                            ui.close();
-                        }
-                    }
-                    RefKind::RemoteBranch => {
-                        if ui
-                            .button(format!("\u{e725}  Checkout {} as local branch", rf.name))
-                            .clicked()
-                        {
-                            menu_action = Some(GraphAction::CheckoutRemote(rf.name.clone()));
-                            ui.close();
-                        }
-                        if ui
-                            .button(format!("\u{f1f8}  Delete {} on remote", rf.name))
-                            .clicked()
-                        {
-                            menu_action = Some(GraphAction::DeleteRemoteBranch(rf.name.clone()));
-                            ui.close();
-                        }
-                    }
-                    RefKind::Tag
-                        if ui
-                            .button(format!("\u{f1f8}  Delete tag {}", rf.name))
-                            .clicked()
-                        => {
-                            menu_action = Some(GraphAction::DeleteTag(rf.name.clone()));
-                            ui.close();
-                        }
-                    _ => {}
-                }
-            }
-        }
-        if ui.button("\u{f067}  Create branch here\u{2026}").clicked() {
-            menu_action = Some(GraphAction::CreateBranch(oid));
-            ui.close();
-        }
-        if ui.button("\u{f02b}  Create tag here\u{2026}").clicked() {
-            menu_action = Some(GraphAction::CreateTag(oid));
-            ui.close();
-        }
-        if ui.button("\u{f06a}  Checkout commit (detached)").clicked() {
-            menu_action = Some(GraphAction::CheckoutCommit(oid));
-            ui.close();
-        }
-        ui.separator();
-        if ui
-            .button("\u{e729}  Cherry-pick onto current branch")
-            .clicked()
-        {
-            menu_action = Some(GraphAction::CherryPick(oid));
-            ui.close();
-        }
-        if ui.button("\u{f0e2}  Revert this commit").clicked() {
-            menu_action = Some(GraphAction::Revert(oid));
-            ui.close();
-        }
-        if ui
-            .button("\u{e728}  Rebase current branch onto this")
-            .clicked()
-        {
-            menu_action = Some(GraphAction::RebaseOnto(oid));
-            ui.close();
-        }
-        if ui
-            .button("\u{e728}  Interactive rebase from here\u{2026}")
-            .clicked()
-        {
-            menu_action = Some(GraphAction::InteractiveRebase(oid));
-            ui.close();
-        }
-        ui.menu_button("\u{f0e2}  Reset current branch to here", |ui| {
-            for mode in [ResetMode::Soft, ResetMode::Mixed, ResetMode::Hard] {
-                if ui.button(mode.label()).clicked() {
-                    menu_action = Some(GraphAction::Reset(oid, mode));
-                    ui.close();
-                }
-            }
-        });
-    });
+    }
     if menu_action.is_some() {
         return menu_action;
     }
@@ -429,6 +359,186 @@ pub fn draw(
             }
         }
     None
+}
+
+fn build_menu_entries(
+    oid: Oid,
+    row: Option<&crate::repo::GraphRow>,
+) -> (String, Vec<(String, GraphAction)>) {
+    if let Some(stash) = row.and_then(|r| r.refs.iter().find(|x| x.kind == RefKind::Stash))
+        && let Some(idx) = parse_stash_index(&stash.name)
+    {
+        let entries = vec![
+            ("\u{f0ab}  Pop (apply + drop)".to_string(), GraphAction::StashPop(idx)),
+            ("\u{f0c5}  Apply (keep)".to_string(), GraphAction::StashApply(idx)),
+            ("\u{f1f8}  Drop".to_string(), GraphAction::StashDrop(idx)),
+        ];
+        return (stash.name.clone(), entries);
+    }
+
+    let mut entries: Vec<(String, GraphAction)> = Vec::new();
+    if let Some(row) = row {
+        for rf in &row.refs {
+            match rf.kind {
+                RefKind::LocalBranch => {
+                    if !rf.is_head {
+                        entries.push((
+                            format!("\u{e725}  Switch to {}", rf.name),
+                            GraphAction::Switch(rf.name.clone()),
+                        ));
+                    }
+                    entries.push((
+                        format!("\u{f044}  Rename {}\u{2026}", rf.name),
+                        GraphAction::RenameBranch(rf.name.clone()),
+                    ));
+                    if !rf.is_head {
+                        entries.push((
+                            format!("\u{f1f8}  Delete {}", rf.name),
+                            GraphAction::DeleteBranch(rf.name.clone()),
+                        ));
+                    }
+                }
+                RefKind::RemoteBranch => {
+                    entries.push((
+                        format!("\u{e725}  Checkout {} as local branch", rf.name),
+                        GraphAction::CheckoutRemote(rf.name.clone()),
+                    ));
+                    entries.push((
+                        format!("\u{f1f8}  Delete {} on remote", rf.name),
+                        GraphAction::DeleteRemoteBranch(rf.name.clone()),
+                    ));
+                }
+                RefKind::Tag => {
+                    entries.push((
+                        format!("\u{f1f8}  Delete tag {}", rf.name),
+                        GraphAction::DeleteTag(rf.name.clone()),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    entries.push((
+        "\u{f067}  Create branch here\u{2026}".to_string(),
+        GraphAction::CreateBranch(oid),
+    ));
+    entries.push((
+        "\u{f02b}  Create tag here\u{2026}".to_string(),
+        GraphAction::CreateTag(oid),
+    ));
+    entries.push((
+        "\u{f06a}  Checkout commit (detached)".to_string(),
+        GraphAction::CheckoutCommit(oid),
+    ));
+    entries.push((
+        "\u{e729}  Cherry-pick onto current branch".to_string(),
+        GraphAction::CherryPick(oid),
+    ));
+    entries.push((
+        "\u{f0e2}  Revert this commit".to_string(),
+        GraphAction::Revert(oid),
+    ));
+    entries.push((
+        "\u{e728}  Rebase current branch onto this".to_string(),
+        GraphAction::RebaseOnto(oid),
+    ));
+    entries.push((
+        "\u{e728}  Interactive rebase from here\u{2026}".to_string(),
+        GraphAction::InteractiveRebase(oid),
+    ));
+    for mode in [ResetMode::Soft, ResetMode::Mixed, ResetMode::Hard] {
+        entries.push((
+            format!("\u{f0e2}  Reset ({}) to here", mode.label()),
+            GraphAction::Reset(oid, mode),
+        ));
+    }
+
+    let short = oid.to_string();
+    (format!("commit {}", &short[..7.min(short.len())]), entries)
+}
+
+const MENU_ROW_H: f32 = 20.0;
+
+fn draw_menu(
+    ui: &mut egui::Ui,
+    header: &str,
+    entries: &[(String, GraphAction)],
+    sel: &mut usize,
+    close: &mut bool,
+) -> Option<GraphAction> {
+    let n = entries.len();
+    if n == 0 {
+        *close = true;
+        return None;
+    }
+    *sel = (*sel).min(n - 1);
+
+    let (mut down, mut up, mut activate) = (false, false, false);
+    ui.input_mut(|i| {
+        down = i.consume_key(egui::Modifiers::NONE, egui::Key::J)
+            || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+        up = i.consume_key(egui::Modifiers::NONE, egui::Key::K)
+            || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+        activate = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+            || i.consume_key(egui::Modifiers::NONE, egui::Key::L)
+            || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight);
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::H)
+            || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+        {
+            *close = true;
+        }
+    });
+    if down {
+        *sel = (*sel + 1) % n;
+    }
+    if up {
+        *sel = (*sel + n - 1) % n;
+    }
+
+    let font = FontId::proportional(13.0);
+    ui.add(egui::Label::new(egui::RichText::new(header).weak().monospace()).selectable(false));
+    ui.separator();
+
+    let mut width = 60.0f32;
+    for (label, _) in entries {
+        let w = ui.ctx().fonts_mut(|f| {
+            f.layout_no_wrap(label.clone(), font.clone(), Color32::WHITE)
+                .size()
+                .x
+        });
+        width = width.max(w);
+    }
+    width += 16.0;
+
+    let pointer_moved = ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO);
+    let sel_bg = ui.visuals().selection.bg_fill;
+    let text_color = ui.visuals().text_color();
+
+    let mut result = None;
+    for (i, (label, action)) in entries.iter().enumerate() {
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, MENU_ROW_H), Sense::click());
+        if resp.hovered() && pointer_moved {
+            *sel = i;
+        }
+        if *sel == i {
+            ui.painter().rect_filled(rect, 3.0, sel_bg);
+        }
+        ui.painter().text(
+            pos2(rect.left() + 8.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            label,
+            font.clone(),
+            text_color,
+        );
+        if resp.clicked() {
+            result = Some(action.clone());
+        }
+    }
+
+    if result.is_none() && activate {
+        result = Some(entries[*sel].1.clone());
+    }
+    result
 }
 
 fn line(painter: &egui::Painter, a: egui::Pos2, b: egui::Pos2, color: usize) {

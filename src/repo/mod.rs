@@ -9,7 +9,7 @@ pub use diff::{
     commit_file_diff, commit_files, commit_message, file_diff,
 };
 pub use discovery::{RepoNode, discover};
-pub use graph::{Graph, RefKind, RefLabel, Segment, build as build_graph};
+pub use graph::{Graph, GraphRow, RefKind, RefLabel, Segment, build as build_graph};
 pub use ops::{
     ResetMode, SeqOutcome, SeqState, StashEntry, checkout_branch, checkout_commit,
     checkout_tracking, cherry_pick, cherry_pick_abort, cherry_pick_continue, commit,

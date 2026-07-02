@@ -24,6 +24,9 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     app.track_nav();
     handle_global_keys(app, ui);
     diff_keys(app, ui);
+    if app.active_tab != Tab::Graph {
+        app.graph_menu = None;
+    }
 
     app.ensure_watcher(ui.ctx());
     app.update_visibility(ui.ctx());
@@ -172,6 +175,29 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
 
             match app.active_tab {
                 Tab::Graph => {
+                    let graph_focused = app.focus == Pane::RightTab;
+                    let open_menu = if graph_focused {
+                        graph_keys(app, ui)
+                    } else {
+                        false
+                    };
+                    let cursor = if graph_focused {
+                        app.clamp_graph_cursor();
+                        let items = app.graph_items();
+                        let (commit_row, file) = match items.get(app.graph_cursor) {
+                            Some(crate::app::GraphItem::Commit(r)) => (Some(*r), None),
+                            Some(crate::app::GraphItem::File(k)) => (None, Some(*k)),
+                            _ => (None, None),
+                        };
+                        Some(graph_view::GraphCursor {
+                            commit_row,
+                            file,
+                            scroll: app.graph_scroll_pending,
+                            open_menu,
+                        })
+                    } else {
+                        None
+                    };
                     let sel = app.selected_commit.as_ref().map(|(o, _)| *o);
                     let sel_file = app.selected_commit_file.clone();
                     let show_author = app.config.graph_show_author;
@@ -190,11 +216,20 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                                 sel_file.as_deref(),
                                 show_author,
                                 show_date,
+                                cursor.as_ref(),
+                                &mut app.graph_menu,
                             );
                         });
+                    app.graph_scroll_pending = false;
                     match clicked {
-                        Some(graph_view::GraphAction::Commit(oid)) => app.select_commit(oid),
-                        Some(graph_view::GraphAction::File(path)) => app.select_commit_file(path),
+                        Some(graph_view::GraphAction::Commit(oid)) => {
+                            app.select_commit(oid);
+                            app.set_graph_cursor_to_commit(oid);
+                        }
+                        Some(graph_view::GraphAction::File(path)) => {
+                            app.select_commit_file(path.clone());
+                            app.set_graph_cursor_to_file(&path);
+                        }
                         Some(graph_view::GraphAction::RebaseOnto(oid)) => app.rebase_onto(oid),
                         Some(graph_view::GraphAction::InteractiveRebase(oid)) => {
                             app.interactive_rebase(oid)
@@ -1101,6 +1136,47 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
             _ => {}
         }
     }
+}
+
+fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
+    use crate::keys::{Action, Context};
+
+    if app.graph_menu.is_some() {
+        return false;
+    }
+
+    if app.confirm_discard.is_some()
+        || app.ref_prompt.is_some()
+        || app.confirm_delete.is_some()
+        || app.confirm_reset.is_some()
+        || app.settings_open
+        || ui.ctx().memory(|m| m.focused().is_some())
+    {
+        return false;
+    }
+
+    app.clamp_graph_cursor();
+    let page = crate::app::LIST_PAGE as isize;
+    let mut open_menu = false;
+    let actions = app
+        .keymap
+        .poll(ui, Context::Graph, &mut app.pending_prefix, |_| true);
+    for a in actions {
+        match a {
+            Action::GraphDown => app.move_graph_cursor(1),
+            Action::GraphUp => app.move_graph_cursor(-1),
+            Action::GraphTop => app.set_graph_cursor(0),
+            Action::GraphBottom => app.graph_cursor_bottom(),
+            Action::GraphHalfPageDown => app.move_graph_cursor(page),
+            Action::GraphHalfPageUp => app.move_graph_cursor(-page),
+            Action::GraphOpen => app.graph_activate(),
+            Action::GraphEditor => app.graph_open_editor(),
+            Action::GraphCollapse => app.graph_collapse(),
+            Action::GraphContextMenu => open_menu = true,
+            _ => {}
+        }
+    }
+    open_menu
 }
 
 fn focus_on_click(app: &mut App, ui: &egui::Ui, pane: Pane) {
