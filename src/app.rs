@@ -198,6 +198,34 @@ pub enum GraphItem {
     File(usize),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GraphOp {
+    CherryPick,
+    Revert,
+    RebaseOnto,
+    Checkout,
+}
+
+impl GraphOp {
+    pub fn title(self) -> &'static str {
+        match self {
+            GraphOp::CherryPick => "Cherry-pick commit",
+            GraphOp::Revert => "Revert commit",
+            GraphOp::RebaseOnto => "Rebase onto commit",
+            GraphOp::Checkout => "Check out commit",
+        }
+    }
+
+    pub fn detail(self) -> &'static str {
+        match self {
+            GraphOp::CherryPick => "Apply this commit's changes onto the current branch as a new commit.",
+            GraphOp::Revert => "Create a new commit on the current branch that undoes this commit's changes.",
+            GraphOp::RebaseOnto => "Replay the current branch onto this commit. This rewrites the branch's commits.",
+            GraphOp::Checkout => "Check out this commit directly (detached HEAD).",
+        }
+    }
+}
+
 pub struct GraphMenu {
     pub oid: Oid,
     pub pos: egui::Pos2,
@@ -282,7 +310,8 @@ pub struct App {
     pub ref_prompt: Option<RefPrompt>,
     pub name_input: String,
     pub confirm_delete: Option<DeleteTarget>,
-    pub confirm_reset: Option<(Oid, repo::ResetMode)>,
+    pub reset_prompt: Option<Oid>,
+    pub confirm_op: Option<(GraphOp, Oid)>,
 
     pub config: Config,
     pub settings_open: bool,
@@ -360,7 +389,8 @@ impl App {
             ref_prompt: None,
             name_input: String::new(),
             confirm_delete: None,
-            confirm_reset: None,
+            reset_prompt: None,
+            confirm_op: None,
             config,
             settings_open: false,
             remote_busy: false,
@@ -1003,6 +1033,18 @@ impl App {
         }
     }
 
+    pub fn graph_target_commit(&self) -> Option<Oid> {
+        let items = self.graph_items();
+        let idx = self.graph_cursor.min(items.len().checked_sub(1)?);
+        match items.get(idx)? {
+            GraphItem::Commit(r) => Some(self.graph.rows[*r].id),
+            GraphItem::File(_) => match items[self.parent_commit_item(&items, idx)?] {
+                GraphItem::Commit(r) => Some(self.graph.rows[r].id),
+                GraphItem::File(_) => None,
+            },
+        }
+    }
+
     pub fn set_graph_cursor_to_file(&mut self, path: &str) {
         if let Some(idx) = self.graph_items().iter().position(|it| {
             matches!(it, GraphItem::File(k) if self.commit_files.get(*k).is_some_and(|f| f.path == path))
@@ -1479,6 +1521,18 @@ impl App {
             self.error = Some(format!("delete failed: {e}"));
         }
         self.reload();
+    }
+
+    pub fn run_confirmed_op(&mut self) {
+        let Some((op, oid)) = self.confirm_op.take() else {
+            return;
+        };
+        match op {
+            GraphOp::CherryPick => self.cherry_pick(oid),
+            GraphOp::Revert => self.revert(oid),
+            GraphOp::RebaseOnto => self.rebase_onto(oid),
+            GraphOp::Checkout => self.checkout_commit(oid),
+        }
     }
 
     pub fn do_reset(&mut self, oid: Oid, mode: repo::ResetMode) {

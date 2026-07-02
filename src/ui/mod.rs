@@ -230,12 +230,18 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                             app.select_commit_file(path.clone());
                             app.set_graph_cursor_to_file(&path);
                         }
-                        Some(graph_view::GraphAction::RebaseOnto(oid)) => app.rebase_onto(oid),
+                        Some(graph_view::GraphAction::RebaseOnto(oid)) => {
+                            app.confirm_op = Some((crate::app::GraphOp::RebaseOnto, oid))
+                        }
                         Some(graph_view::GraphAction::InteractiveRebase(oid)) => {
                             app.interactive_rebase(oid)
                         }
-                        Some(graph_view::GraphAction::CherryPick(oid)) => app.cherry_pick(oid),
-                        Some(graph_view::GraphAction::Revert(oid)) => app.revert(oid),
+                        Some(graph_view::GraphAction::CherryPick(oid)) => {
+                            app.confirm_op = Some((crate::app::GraphOp::CherryPick, oid))
+                        }
+                        Some(graph_view::GraphAction::Revert(oid)) => {
+                            app.confirm_op = Some((crate::app::GraphOp::Revert, oid))
+                        }
                         Some(graph_view::GraphAction::Switch(name)) => app.switch_branch(name),
                         Some(graph_view::GraphAction::CheckoutRemote(name)) => {
                             app.checkout_tracking(name)
@@ -244,7 +250,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                             app.confirm_delete = Some(crate::app::DeleteTarget::RemoteBranch(name))
                         }
                         Some(graph_view::GraphAction::CheckoutCommit(oid)) => {
-                            app.checkout_commit(oid)
+                            app.confirm_op = Some((crate::app::GraphOp::Checkout, oid))
                         }
                         Some(graph_view::GraphAction::CreateBranch(oid)) => {
                             app.begin_create_branch(oid)
@@ -259,12 +265,8 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         Some(graph_view::GraphAction::DeleteTag(name)) => {
                             app.confirm_delete = Some(crate::app::DeleteTarget::Tag(name))
                         }
-                        Some(graph_view::GraphAction::Reset(oid, mode)) => {
-                            if mode == crate::repo::ResetMode::Hard {
-                                app.confirm_reset = Some((oid, mode));
-                            } else {
-                                app.do_reset(oid, mode);
-                            }
+                        Some(graph_view::GraphAction::OpenReset(oid)) => {
+                            app.reset_prompt = Some(oid);
                         }
                         Some(graph_view::GraphAction::StashPop(i)) => app.stash_pop(i),
                         Some(graph_view::GraphAction::StashApply(i)) => app.stash_apply(i),
@@ -439,6 +441,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     ref_prompt_modal(app, ui);
     delete_ref_modal(app, ui);
     reset_modal(app, ui);
+    confirm_op_modal(app, ui);
     search_confirm_modal(app, ui);
 
     draw_settings(app, ui.ctx());
@@ -667,35 +670,103 @@ fn search_confirm_modal(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn reset_modal(app: &mut App, ui: &mut egui::Ui) {
-    let Some((oid, mode)) = app.confirm_reset else {
+    use crate::repo::ResetMode;
+    let Some(oid) = app.reset_prompt else {
         return;
     };
     let short = oid.to_string();
-    let resp = egui::Modal::new(egui::Id::new("confirm_reset")).show(ui.ctx(), |ui| {
-        ui.set_width(360.0);
-        ui.heading(format!("{} reset", mode.label()));
-        ui.add_space(6.0);
-        ui.label(format!(
-            "Move the current branch to {} and DISCARD all uncommitted changes in the working tree. This cannot be undone.",
+
+    let mut chosen: Option<ResetMode> = None;
+    ui.input_mut(|i| {
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::S) {
+            chosen = Some(ResetMode::Soft);
+        }
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::M) {
+            chosen = Some(ResetMode::Mixed);
+        }
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::H) {
+            chosen = Some(ResetMode::Hard);
+        }
+    });
+
+    enum Pick {
+        Mode(ResetMode),
+        Cancel,
+        Idle,
+    }
+    let resp = egui::Modal::new(egui::Id::new("reset_prompt")).show(ui.ctx(), |ui| {
+        ui.set_width(380.0);
+        ui.heading(format!(
+            "Reset current branch to {}",
             &short[..7.min(short.len())]
         ));
+        ui.add_space(6.0);
+        ui.label("Choose how to move the current branch (HEAD):");
+        ui.add_space(8.0);
+        let mut pick = Pick::Idle;
+        if ui
+            .button("Soft (s)  \u{2014} keep index and working tree")
+            .clicked()
+        {
+            pick = Pick::Mode(ResetMode::Soft);
+        }
+        if ui
+            .button("Mixed (m)  \u{2014} reset index, keep working tree")
+            .clicked()
+        {
+            pick = Pick::Mode(ResetMode::Mixed);
+        }
+        if ui
+            .add(
+                egui::Button::new("Hard (h)  \u{2014} DISCARD working tree changes")
+                    .fill(egui::Color32::from_rgb(0x8b, 0x2e, 0x2e)),
+            )
+            .clicked()
+        {
+            pick = Pick::Mode(ResetMode::Hard);
+        }
+        ui.add_space(8.0);
+        if ui.button("Cancel (Esc)").clicked() {
+            pick = Pick::Cancel;
+        }
+        pick
+    });
+
+    if let Pick::Mode(m) = &resp.inner {
+        chosen = Some(*m);
+    }
+    if let Some(m) = chosen {
+        app.do_reset(oid, m);
+        app.reset_prompt = None;
+    } else if matches!(resp.inner, Pick::Cancel) || resp.should_close() {
+        app.reset_prompt = None;
+    }
+}
+
+fn confirm_op_modal(app: &mut App, ui: &mut egui::Ui) {
+    let Some((op, oid)) = app.confirm_op else {
+        return;
+    };
+    let short = oid.to_string();
+    let confirm_key = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let resp = egui::Modal::new(egui::Id::new("confirm_graph_op")).show(ui.ctx(), |ui| {
+        ui.set_width(380.0);
+        ui.heading(format!("{} {}", op.title(), &short[..7.min(short.len())]));
+        ui.add_space(6.0);
+        ui.label(op.detail());
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let cancel = ui.button("Cancel").clicked();
-            let go = ui
-                .add(egui::Button::new(format!("{} reset", mode.label()))
-                    .fill(egui::Color32::from_rgb(0x8b, 0x2e, 0x2e)))
-                .clicked();
+            let cancel = ui.button("Cancel (Esc)").clicked();
+            let go = ui.button("Confirm (Enter)").clicked();
             (go, cancel)
         })
         .inner
     });
     let (go, cancel) = resp.inner;
-    if go {
-        app.do_reset(oid, mode);
-        app.confirm_reset = None;
+    if go || confirm_key {
+        app.run_confirmed_op();
     } else if cancel || resp.should_close() {
-        app.confirm_reset = None;
+        app.confirm_op = None;
     }
 }
 
@@ -1148,7 +1219,8 @@ fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
     if app.confirm_discard.is_some()
         || app.ref_prompt.is_some()
         || app.confirm_delete.is_some()
-        || app.confirm_reset.is_some()
+        || app.reset_prompt.is_some()
+        || app.confirm_op.is_some()
         || app.settings_open
         || ui.ctx().memory(|m| m.focused().is_some())
     {
@@ -1173,6 +1245,46 @@ fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
             Action::GraphEditor => app.graph_open_editor(),
             Action::GraphCollapse => app.graph_collapse(),
             Action::GraphContextMenu => open_menu = true,
+            Action::GraphReset => {
+                if let Some(oid) = app.graph_target_commit() {
+                    app.reset_prompt = Some(oid);
+                }
+            }
+            Action::GraphCreateBranch => {
+                if let Some(oid) = app.graph_target_commit() {
+                    app.begin_create_branch(oid);
+                }
+            }
+            Action::GraphCreateTag => {
+                if let Some(oid) = app.graph_target_commit() {
+                    app.begin_create_tag(oid);
+                }
+            }
+            Action::GraphCherryPick => {
+                if let Some(oid) = app.graph_target_commit() {
+                    app.confirm_op = Some((crate::app::GraphOp::CherryPick, oid));
+                }
+            }
+            Action::GraphRevert => {
+                if let Some(oid) = app.graph_target_commit() {
+                    app.confirm_op = Some((crate::app::GraphOp::Revert, oid));
+                }
+            }
+            Action::GraphRebaseOnto => {
+                if let Some(oid) = app.graph_target_commit() {
+                    app.confirm_op = Some((crate::app::GraphOp::RebaseOnto, oid));
+                }
+            }
+            Action::GraphCheckout => {
+                if let Some(oid) = app.graph_target_commit() {
+                    app.confirm_op = Some((crate::app::GraphOp::Checkout, oid));
+                }
+            }
+            Action::GraphRebaseInteractive => {
+                if let Some(oid) = app.graph_target_commit() {
+                    app.interactive_rebase(oid);
+                }
+            }
             _ => {}
         }
     }

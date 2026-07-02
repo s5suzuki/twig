@@ -89,6 +89,14 @@ pub enum Action {
     GraphEditor,
     GraphCollapse,
     GraphContextMenu,
+    GraphReset,
+    GraphCreateBranch,
+    GraphCreateTag,
+    GraphCherryPick,
+    GraphRevert,
+    GraphRebaseOnto,
+    GraphRebaseInteractive,
+    GraphCheckout,
 }
 
 impl Action {
@@ -148,6 +156,14 @@ impl Action {
         (Action::GraphEditor, "graph-editor"),
         (Action::GraphCollapse, "graph-collapse"),
         (Action::GraphContextMenu, "graph-context-menu"),
+        (Action::GraphReset, "graph-reset"),
+        (Action::GraphCreateBranch, "graph-create-branch"),
+        (Action::GraphCreateTag, "graph-create-tag"),
+        (Action::GraphCherryPick, "graph-cherry-pick"),
+        (Action::GraphRevert, "graph-revert"),
+        (Action::GraphRebaseOnto, "graph-rebase-onto"),
+        (Action::GraphRebaseInteractive, "graph-rebase-interactive"),
+        (Action::GraphCheckout, "graph-checkout"),
     ];
 
     fn from_name(s: &str) -> Option<Action> {
@@ -323,6 +339,14 @@ impl Keymap {
         km.push(Graph, n, H, GraphCollapse);
         km.push(Graph, ctrl, Period, GraphContextMenu);
         km.push_seq(Graph, Chord::new(n, Space), Chord::new(n, Period), GraphContextMenu);
+        km.push(Graph, shift, R, GraphReset);
+        km.push(Graph, n, B, GraphCreateBranch);
+        km.push(Graph, n, T, GraphCreateTag);
+        km.push(Graph, n, Y, GraphCherryPick);
+        km.push(Graph, shift, V, GraphRevert);
+        km.push(Graph, shift, B, GraphRebaseOnto);
+        km.push(Graph, n, I, GraphRebaseInteractive);
+        km.push(Graph, n, O, GraphCheckout);
 
         km
     }

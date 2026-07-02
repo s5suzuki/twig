@@ -2,7 +2,7 @@ use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, UiBuilder, 
 use git2::Oid;
 
 use crate::app::GraphMenu;
-use crate::repo::{CommitFile, Graph, RefKind, RefLabel, ResetMode, Segment, StatusKind};
+use crate::repo::{CommitFile, Graph, RefKind, RefLabel, Segment, StatusKind};
 
 const HEAD_COLOR: Color32 = Color32::from_rgb(0xff, 0xd1, 0x6b);
 
@@ -57,7 +57,7 @@ pub enum GraphAction {
     DeleteBranch(String),
     CreateTag(Oid),
     DeleteTag(String),
-    Reset(Oid, ResetMode),
+    OpenReset(Oid),
     StashPop(usize),
     StashApply(usize),
     StashDrop(usize),
@@ -446,12 +446,10 @@ fn build_menu_entries(
         "\u{e728}  Interactive rebase from here\u{2026}".to_string(),
         GraphAction::InteractiveRebase(oid),
     ));
-    for mode in [ResetMode::Soft, ResetMode::Mixed, ResetMode::Hard] {
-        entries.push((
-            format!("\u{f0e2}  Reset ({}) to here", mode.label()),
-            GraphAction::Reset(oid, mode),
-        ));
-    }
+    entries.push((
+        "\u{f0e2}  Reset current branch to here\u{2026}".to_string(),
+        GraphAction::OpenReset(oid),
+    ));
 
     let short = oid.to_string();
     (format!("commit {}", &short[..7.min(short.len())]), entries)
