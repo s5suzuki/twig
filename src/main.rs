@@ -917,6 +917,8 @@ fn print_diff(d: &repo::FileDiff) {
                 left,
                 right,
                 kind,
+                left_emph,
+                right_emph,
             } => {
                 let mark = match kind {
                     repo::LineKind::Context => " ",
@@ -926,14 +928,36 @@ fn print_diff(d: &repo::FileDiff) {
                 };
                 let o = old_no.map(|n| n.to_string()).unwrap_or_default();
                 let n = new_no.map(|n| n.to_string()).unwrap_or_default();
-                println!(
-                    "r{i:<3}{mark} {o:>3}|{:<20} {n:>3}|{}",
-                    left.as_deref().unwrap_or(""),
-                    right.as_deref().unwrap_or("")
-                );
+                let l = mark_emphasis(left.as_deref().unwrap_or(""), left_emph);
+                let r = mark_emphasis(right.as_deref().unwrap_or(""), right_emph);
+                println!("r{i:<3}{mark} {o:>3}|{l:<20} {n:>3}|{r}");
             }
         }
     }
+}
+
+fn mark_emphasis(text: &str, emph: &[std::ops::Range<usize>]) -> String {
+    if emph.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len() + 2 * emph.len());
+    let mut pos = 0;
+    for r in emph {
+        if r.start > pos && r.start <= text.len() {
+            out.push_str(&text[pos..r.start]);
+        }
+        let end = r.end.min(text.len());
+        if r.start <= end {
+            out.push('«');
+            out.push_str(&text[r.start.min(text.len())..end]);
+            out.push('»');
+            pos = end;
+        }
+    }
+    if pos < text.len() {
+        out.push_str(&text[pos..]);
+    }
+    out
 }
 
 fn print_node(node: &repo::RepoNode, depth: usize) {

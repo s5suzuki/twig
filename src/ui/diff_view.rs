@@ -31,6 +31,11 @@ const ADD_BG_DARK: Color32 = Color32::from_rgb(0x1c, 0x3a, 0x24);
 const DEL_BG_DARK: Color32 = Color32::from_rgb(0x40, 0x20, 0x24);
 const ADD_BG_LIGHT: Color32 = Color32::from_rgb(0xcc, 0xef, 0xd0);
 const DEL_BG_LIGHT: Color32 = Color32::from_rgb(0xf5, 0xd2, 0xd8);
+
+const ADD_EMPH_DARK: Color32 = Color32::from_rgb(0x2e, 0x6a, 0x3e);
+const DEL_EMPH_DARK: Color32 = Color32::from_rgb(0x7a, 0x28, 0x35);
+const ADD_EMPH_LIGHT: Color32 = Color32::from_rgb(0x86, 0xd8, 0x92);
+const DEL_EMPH_LIGHT: Color32 = Color32::from_rgb(0xf0, 0x9d, 0xaa);
 const HUNK_FG: Color32 = Color32::from_rgb(0x6c, 0x9c, 0xff);
 const NO_FG: Color32 = Color32::from_gray(110);
 
@@ -47,6 +52,12 @@ fn add_bg(dark: bool) -> Color32 {
 }
 fn del_bg(dark: bool) -> Color32 {
     if dark { DEL_BG_DARK } else { DEL_BG_LIGHT }
+}
+fn add_emph(dark: bool) -> Color32 {
+    if dark { ADD_EMPH_DARK } else { ADD_EMPH_LIGHT }
+}
+fn del_emph(dark: bool) -> Color32 {
+    if dark { DEL_EMPH_DARK } else { DEL_EMPH_LIGHT }
 }
 
 pub struct DiffNav {
@@ -218,6 +229,8 @@ fn render_rows(
                 left,
                 right,
                 kind,
+                left_emph,
+                right_emph,
             } => {
                 let y = ui.cursor().top();
                 let force = nav.is_some_and(|n| n.scroll_to_cursor && n.cursor == i);
@@ -244,10 +257,12 @@ fn render_rows(
 
                 let colors = CellColors { default_color, hl_color, cur_color };
                 let left_galley = cell_galley(
-                    ui, &mut cache.left, i, left.as_deref(), text_w, left_syn, &[], colors,
+                    ui, &mut cache.left, i, left.as_deref(), text_w, left_syn, &[],
+                    left_emph, del_emph(dark), colors,
                 );
                 let right_galley = cell_galley(
-                    ui, &mut cache.right, i, right.as_deref(), text_w, right_syn, find_hl, colors,
+                    ui, &mut cache.right, i, right.as_deref(), text_w, right_syn, find_hl,
+                    right_emph, add_emph(dark), colors,
                 );
 
                 let row_resp = ui.horizontal_top(|ui| {
@@ -374,18 +389,20 @@ fn cell_galley(
     w: f32,
     syn: &[Span],
     find: &[(usize, usize, bool)],
+    emph: &[std::ops::Range<usize>],
+    emph_color: Color32,
     colors: CellColors,
 ) -> Arc<Galley> {
     if syn.is_empty() {
-        return build_galley(ui, text, w, syn, find, colors);
+        return build_galley(ui, text, w, syn, find, emph, emph_color, colors);
     }
     if find.is_empty() {
         return cache
             .entry(i)
-            .or_insert_with(|| build_galley(ui, text, w, syn, &[], colors))
+            .or_insert_with(|| build_galley(ui, text, w, syn, &[], emph, emph_color, colors))
             .clone();
     }
-    build_galley(ui, text, w, syn, find, colors)
+    build_galley(ui, text, w, syn, find, emph, emph_color, colors)
 }
 
 #[derive(Clone, Copy)]
@@ -395,19 +412,22 @@ struct CellColors {
     cur_color: Color32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_galley(
     ui: &egui::Ui,
     text: Option<&str>,
     w: f32,
     syn: &[Span],
     find: &[(usize, usize, bool)],
+    emph: &[std::ops::Range<usize>],
+    emph_color: Color32,
     colors: CellColors,
 ) -> Arc<Galley> {
     let _ = w;
     let text = text.unwrap_or("");
     let font = FontId::monospace(12.0);
     let color = colors.default_color;
-    if syn.is_empty() && find.is_empty() {
+    if syn.is_empty() && find.is_empty() && emph.is_empty() {
         return ui.painter().layout(text.to_owned(), font, color, f32::INFINITY);
     }
 
@@ -421,6 +441,10 @@ fn build_galley(
         bounds.push(s.min(len));
         bounds.push(e.min(len));
     }
+    for r in emph {
+        bounds.push(r.start.min(len));
+        bounds.push(r.end.min(len));
+    }
     bounds.retain(|&b| text.is_char_boundary(b));
     bounds.sort_unstable();
     bounds.dedup();
@@ -432,9 +456,17 @@ fn build_galley(
             .unwrap_or(color)
     };
     let bg_at = |pos: usize| -> Option<Color32> {
-        find.iter()
+        if let Some(c) = find
+            .iter()
             .find(|&&(s, e, _)| pos >= s && pos < e)
             .map(|&(_, _, is_cur)| if is_cur { colors.cur_color } else { colors.hl_color })
+        {
+            return Some(c);
+        }
+        if emph.iter().any(|r| pos >= r.start && pos < r.end) {
+            return Some(emph_color);
+        }
+        None
     };
 
     let mut job = LayoutJob::default();

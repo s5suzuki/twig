@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::Path;
 
 use git2::{
@@ -33,6 +34,8 @@ pub enum DiffRow {
         left: Option<String>,
         right: Option<String>,
         kind: LineKind,
+        left_emph: Vec<Range<usize>>,
+        right_emph: Vec<Range<usize>>,
     },
 }
 
@@ -180,6 +183,8 @@ pub fn file_diff(repo_path: &Path, file: &str, mode: DiffMode) -> Result<FileDif
                             left: Some(text.clone()),
                             right: Some(text),
                             kind: LineKind::Context,
+                            left_emph: Vec::new(),
+                            right_emph: Vec::new(),
                         });
                     }
                 }
@@ -407,6 +412,8 @@ fn append_patch_rows(
                         left: Some(text.clone()),
                         right: Some(text),
                         kind: LineKind::Context,
+                        left_emph: Vec::new(),
+                        right_emph: Vec::new(),
                     });
                 }
             }
@@ -450,16 +457,63 @@ fn flush_pairs(
             (true, false) => LineKind::Removed,
             _ => LineKind::Added,
         };
+        let (left_emph, right_emph) = match (kind, left, right) {
+            (LineKind::Changed, Some((_, l)), Some((_, r))) => intra_emphasis(l, r),
+            _ => (Vec::new(), Vec::new()),
+        };
         rows.push(DiffRow::Line {
             old_no: left.and_then(|(n, _)| *n),
             new_no: right.and_then(|(n, _)| *n),
             left: left.map(|(_, s)| s.clone()),
             right: right.map(|(_, s)| s.clone()),
             kind,
+            left_emph,
+            right_emph,
         });
     }
     dels.clear();
     adds.clear();
+}
+
+const EMPH_MAX_LEN: usize = 1000;
+
+fn intra_emphasis(old: &str, new: &str) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    if old.len() > EMPH_MAX_LEN || new.len() > EMPH_MAX_LEN {
+        return (Vec::new(), Vec::new());
+    }
+    let ob = old.as_bytes();
+    let nb = new.as_bytes();
+
+    let mut p = 0;
+    let max_p = ob.len().min(nb.len());
+    while p < max_p && ob[p] == nb[p] {
+        p += 1;
+    }
+    while p > 0 && !(old.is_char_boundary(p) && new.is_char_boundary(p)) {
+        p -= 1;
+    }
+
+    let mut s = 0;
+    let max_s = (ob.len() - p).min(nb.len() - p);
+    while s < max_s && ob[ob.len() - 1 - s] == nb[nb.len() - 1 - s] {
+        s += 1;
+    }
+    let mut old_end = ob.len() - s;
+    let mut new_end = nb.len() - s;
+    while old_end < ob.len() && new_end < nb.len() && !old.is_char_boundary(old_end) {
+        old_end += 1;
+        new_end += 1;
+    }
+
+    let total = ob.len().max(nb.len());
+    let common = p + (ob.len() - old_end);
+    if total == 0 || (common as f64) < 0.5 * (total as f64) {
+        return (Vec::new(), Vec::new());
+    }
+
+    let left = if p < old_end { vec![p..old_end] } else { Vec::new() };
+    let right = if p < new_end { vec![p..new_end] } else { Vec::new() };
+    (left, right)
 }
 
 pub fn build_partial_patch(
