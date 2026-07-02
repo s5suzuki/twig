@@ -26,6 +26,16 @@ impl Context {
             _ => return None,
         })
     }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Context::Global => "Global",
+            Context::Sidebar => "Sidebar",
+            Context::Changes => "Changes",
+            Context::Diff => "Diff",
+            Context::Graph => "Graph",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -103,80 +113,95 @@ pub enum Action {
 }
 
 impl Action {
-    const TABLE: &'static [(Action, &'static str)] = &[
-        (Action::FocusLeft, "focus-left"),
-        (Action::FocusRight, "focus-right"),
-        (Action::FocusUp, "focus-up"),
-        (Action::FocusDown, "focus-down"),
-        (Action::CycleTab, "cycle-tab"),
-        (Action::CycleTabFwd, "cycle-tab-fwd"),
-        (Action::CycleTabBack, "cycle-tab-back"),
-        (Action::ToggleShell, "toggle-shell"),
-        (Action::OpenSearch, "open-search"),
-        (Action::NavBack, "nav-back"),
-        (Action::NavForward, "nav-forward"),
-        (Action::DiffFind, "diff-find"),
-        (Action::DiffDown, "diff-down"),
-        (Action::DiffUp, "diff-up"),
-        (Action::DiffTop, "diff-top"),
-        (Action::DiffBottom, "diff-bottom"),
-        (Action::DiffToggleVisual, "diff-toggle-visual"),
-        (Action::DiffClearVisual, "diff-clear-visual"),
-        (Action::DiffStageSelection, "diff-stage-selection"),
-        (Action::DiffUnstageSelection, "diff-unstage-selection"),
-        (Action::DiffHalfPageDown, "diff-half-page-down"),
-        (Action::DiffHalfPageUp, "diff-half-page-up"),
-        (Action::DiffPageDown, "diff-page-down"),
-        (Action::DiffPageUp, "diff-page-up"),
-        (Action::ChangesTop, "changes-top"),
-        (Action::ChangesBottom, "changes-bottom"),
-        (Action::ChangesDown, "changes-down"),
-        (Action::ChangesUp, "changes-up"),
-        (Action::ChangesCollapse, "changes-collapse"),
-        (Action::ChangesExpand, "changes-expand"),
-        (Action::ChangesActivate, "changes-activate"),
-        (Action::ChangesStageToggle, "changes-stage-toggle"),
-        (Action::ChangesEdit, "changes-edit"),
-        (Action::ChangesDiscard, "changes-discard"),
-        (Action::ChangesHalfPageDown, "changes-half-page-down"),
-        (Action::ChangesHalfPageUp, "changes-half-page-up"),
-        (Action::SidebarTop, "sidebar-top"),
-        (Action::SidebarBottom, "sidebar-bottom"),
-        (Action::SidebarDown, "sidebar-down"),
-        (Action::SidebarUp, "sidebar-up"),
-        (Action::SidebarSelect, "sidebar-select"),
-        (Action::SidebarExpand, "sidebar-expand"),
-        (Action::SidebarCollapse, "sidebar-collapse"),
-        (Action::SidebarHalfPageDown, "sidebar-half-page-down"),
-        (Action::SidebarHalfPageUp, "sidebar-half-page-up"),
-        (Action::GraphDown, "graph-down"),
-        (Action::GraphUp, "graph-up"),
-        (Action::GraphTop, "graph-top"),
-        (Action::GraphBottom, "graph-bottom"),
-        (Action::GraphHalfPageDown, "graph-half-page-down"),
-        (Action::GraphHalfPageUp, "graph-half-page-up"),
-        (Action::GraphOpen, "graph-open"),
-        (Action::GraphEditor, "graph-editor"),
-        (Action::GraphCollapse, "graph-collapse"),
-        (Action::GraphContextMenu, "graph-context-menu"),
-        (Action::GraphReset, "graph-reset"),
-        (Action::GraphCreateBranch, "graph-create-branch"),
-        (Action::GraphCreateTag, "graph-create-tag"),
-        (Action::GraphCherryPick, "graph-cherry-pick"),
-        (Action::GraphRevert, "graph-revert"),
-        (Action::GraphRebaseOnto, "graph-rebase-onto"),
-        (Action::GraphRebaseInteractive, "graph-rebase-interactive"),
-        (Action::GraphCheckout, "graph-checkout"),
-        (Action::GraphPush, "graph-push"),
-        (Action::GraphFetch, "graph-fetch"),
-        (Action::GraphPull, "graph-pull"),
+    const TABLE: &'static [(Action, &'static str, &'static str)] = &[
+        (Action::FocusLeft, "focus-left", "Focus the pane on the left"),
+        (Action::FocusRight, "focus-right", "Focus the pane on the right"),
+        (Action::FocusUp, "focus-up", "Focus the pane above"),
+        (Action::FocusDown, "focus-down", "Focus the pane below (terminal)"),
+        (Action::CycleTab, "cycle-tab", "Cycle the right-hand tab"),
+        (Action::CycleTabFwd, "cycle-tab-fwd", "Next right-hand tab"),
+        (Action::CycleTabBack, "cycle-tab-back", "Previous right-hand tab"),
+        (Action::ToggleShell, "toggle-shell", "Toggle the bottom terminal"),
+        (Action::OpenSearch, "open-search", "Open the Search tab"),
+        (Action::NavBack, "nav-back", "Go back in navigation history"),
+        (Action::NavForward, "nav-forward", "Go forward in navigation history"),
+        (Action::DiffFind, "diff-find", "Toggle the in-file find & replace bar"),
+        (Action::DiffDown, "diff-down", "Move cursor down one line"),
+        (Action::DiffUp, "diff-up", "Move cursor up one line"),
+        (Action::DiffTop, "diff-top", "Jump to the first line"),
+        (Action::DiffBottom, "diff-bottom", "Jump to the last line"),
+        (Action::DiffToggleVisual, "diff-toggle-visual", "Toggle visual (line) selection"),
+        (Action::DiffClearVisual, "diff-clear-visual", "Clear the selection"),
+        (Action::DiffStageSelection, "diff-stage-selection", "Stage the selected lines"),
+        (Action::DiffUnstageSelection, "diff-unstage-selection", "Unstage the selected lines"),
+        (Action::DiffHalfPageDown, "diff-half-page-down", "Scroll half a page down"),
+        (Action::DiffHalfPageUp, "diff-half-page-up", "Scroll half a page up"),
+        (Action::DiffPageDown, "diff-page-down", "Scroll one page down"),
+        (Action::DiffPageUp, "diff-page-up", "Scroll one page up"),
+        (Action::ChangesTop, "changes-top", "Move cursor to the top"),
+        (Action::ChangesBottom, "changes-bottom", "Move cursor to the bottom"),
+        (Action::ChangesDown, "changes-down", "Move cursor down"),
+        (Action::ChangesUp, "changes-up", "Move cursor up"),
+        (Action::ChangesCollapse, "changes-collapse", "Collapse a folder/group, or step out"),
+        (Action::ChangesExpand, "changes-expand", "Expand a folder/group, or open a file"),
+        (Action::ChangesActivate, "changes-activate", "Open a file, or toggle a folder/group"),
+        (Action::ChangesStageToggle, "changes-stage-toggle", "Stage/unstage the item under the cursor"),
+        (Action::ChangesEdit, "changes-edit", "Open the file in the editor"),
+        (Action::ChangesDiscard, "changes-discard", "Discard changes to the file"),
+        (Action::ChangesHalfPageDown, "changes-half-page-down", "Move cursor half a page down"),
+        (Action::ChangesHalfPageUp, "changes-half-page-up", "Move cursor half a page up"),
+        (Action::SidebarTop, "sidebar-top", "Move cursor to the top"),
+        (Action::SidebarBottom, "sidebar-bottom", "Move cursor to the bottom"),
+        (Action::SidebarDown, "sidebar-down", "Move cursor down"),
+        (Action::SidebarUp, "sidebar-up", "Move cursor up"),
+        (Action::SidebarSelect, "sidebar-select", "Select the repository under the cursor"),
+        (Action::SidebarExpand, "sidebar-expand", "Expand a node, or select it"),
+        (Action::SidebarCollapse, "sidebar-collapse", "Collapse a node, or step out"),
+        (Action::SidebarHalfPageDown, "sidebar-half-page-down", "Move cursor half a page down"),
+        (Action::SidebarHalfPageUp, "sidebar-half-page-up", "Move cursor half a page up"),
+        (Action::GraphDown, "graph-down", "Move cursor down"),
+        (Action::GraphUp, "graph-up", "Move cursor up"),
+        (Action::GraphTop, "graph-top", "Jump to the newest commit"),
+        (Action::GraphBottom, "graph-bottom", "Jump to the oldest commit"),
+        (Action::GraphHalfPageDown, "graph-half-page-down", "Move cursor half a page down"),
+        (Action::GraphHalfPageUp, "graph-half-page-up", "Move cursor half a page up"),
+        (Action::GraphOpen, "graph-open", "Open the commit / file under the cursor"),
+        (Action::GraphEditor, "graph-editor", "Open the file under the cursor in the editor"),
+        (Action::GraphCollapse, "graph-collapse", "Collapse the expanded commit"),
+        (Action::GraphContextMenu, "graph-context-menu", "Open the context menu"),
+        (Action::GraphReset, "graph-reset", "Reset the current branch to the commit"),
+        (Action::GraphCreateBranch, "graph-create-branch", "Create a branch at the commit"),
+        (Action::GraphCreateTag, "graph-create-tag", "Create a tag at the commit"),
+        (Action::GraphCherryPick, "graph-cherry-pick", "Cherry-pick the commit"),
+        (Action::GraphRevert, "graph-revert", "Revert the commit"),
+        (Action::GraphRebaseOnto, "graph-rebase-onto", "Rebase the current branch onto the commit"),
+        (Action::GraphRebaseInteractive, "graph-rebase-interactive", "Interactively rebase onto the commit"),
+        (Action::GraphCheckout, "graph-checkout", "Check out the commit / branch"),
+        (Action::GraphPush, "graph-push", "Push the current branch"),
+        (Action::GraphFetch, "graph-fetch", "Fetch from the remote"),
+        (Action::GraphPull, "graph-pull", "Pull the current branch"),
     ];
 
     fn from_name(s: &str) -> Option<Action> {
         Self::TABLE
             .iter()
-            .find(|(_, name)| *name == s)
-            .map(|(a, _)| *a)
+            .find(|(_, name, _)| *name == s)
+            .map(|(a, _, _)| *a)
+    }
+
+    fn describe(self) -> &'static str {
+        Self::TABLE
+            .iter()
+            .find(|(a, _, _)| *a == self)
+            .map(|(_, _, d)| *d)
+            .unwrap_or("")
+    }
+
+    fn order(self) -> usize {
+        Self::TABLE
+            .iter()
+            .position(|(a, _, _)| *a == self)
+            .unwrap_or(usize::MAX)
     }
 }
 
@@ -194,6 +219,37 @@ impl Chord {
     fn specificity(&self) -> u32 {
         let m = &self.mods;
         m.alt as u32 + m.shift as u32 + m.ctrl as u32 + m.command as u32 + m.mac_cmd as u32
+    }
+
+    fn describe(&self) -> String {
+        let mut s = String::new();
+        let m = &self.mods;
+        if m.ctrl {
+            s.push_str("Ctrl+");
+        }
+        if m.command || m.mac_cmd {
+            s.push_str("Super+");
+        }
+        if m.alt {
+            s.push_str("Alt+");
+        }
+
+        let name = self.key.symbol_or_name();
+        let letter = name.len() == 1 && name.as_bytes()[0].is_ascii_alphabetic();
+        let only_shift = m.shift && !m.ctrl && !m.alt && !m.command && !m.mac_cmd;
+        if letter && only_shift {
+            s.push_str(&name.to_ascii_uppercase());
+        } else {
+            if m.shift {
+                s.push_str("Shift+");
+            }
+            if letter {
+                s.push_str(&name.to_ascii_lowercase());
+            } else {
+                s.push_str(name);
+            }
+        }
+        s
     }
 
     fn parse(s: &str) -> Option<Chord> {
@@ -234,6 +290,27 @@ struct Binding {
     prefix: Option<Chord>,
     chord: Chord,
     action: Action,
+}
+
+impl Binding {
+    fn describe(&self) -> String {
+        match self.prefix {
+            Some(p) => {
+                let (a, b) = (p.describe(), self.chord.describe());
+                if a.len() == 1 && b.len() == 1 {
+                    format!("{a}{b}")
+                } else {
+                    format!("{a} {b}")
+                }
+            }
+            None => self.chord.describe(),
+        }
+    }
+}
+
+pub struct HelpEntry {
+    pub keys: String,
+    pub desc: &'static str,
 }
 
 pub struct Keymap {
@@ -400,6 +477,18 @@ impl Keymap {
         }
     }
 
+    pub fn help_for(&self, ctx: Context) -> Vec<HelpEntry> {
+        let mut bindings: Vec<&Binding> = self.maps[ctx.index()].iter().collect();
+        bindings.sort_by_key(|b| (b.action.order(), b.chord.specificity()));
+        bindings
+            .iter()
+            .map(|b| HelpEntry {
+                keys: b.describe(),
+                desc: b.action.describe(),
+            })
+            .collect()
+    }
+
     pub fn poll<F: Fn(Action) -> bool>(
         &self,
         ui: &mut egui::Ui,
@@ -479,7 +568,7 @@ mod tests {
 
     #[test]
     fn action_names_roundtrip() {
-        for (action, name) in Action::TABLE {
+        for (action, name, _) in Action::TABLE {
             assert_eq!(Action::from_name(name), Some(*action));
         }
     }
@@ -608,6 +697,22 @@ mod tests {
         );
         assert_eq!(out, vec![Action::ChangesBottom]);
         assert!(pending.is_none());
+    }
+
+    #[test]
+    fn help_lists_chords_and_descriptions() {
+        let km = Keymap::default();
+
+        let global = km.help_for(Context::Global);
+        assert!(global.iter().any(|e| e.keys == "Alt+h"));
+        assert!(global.iter().any(|e| e.keys == "Ctrl+Shift+f"));
+        assert!(global.iter().all(|e| !e.desc.is_empty()));
+
+        let graph = km.help_for(Context::Graph);
+        assert!(graph.iter().any(|e| e.keys == "gg"));
+        assert!(graph.iter().any(|e| e.keys == "G"));
+        assert!(graph.iter().any(|e| e.keys == "Ctrl+d"));
+        assert!(graph.iter().any(|e| e.keys == "Space ."));
     }
 
     #[test]

@@ -315,6 +315,7 @@ pub struct App {
 
     pub config: Config,
     pub settings_open: bool,
+    pub help_open: bool,
 
     pub remote_busy: bool,
     pub remote_kind: RemoteKind,
@@ -393,6 +394,7 @@ impl App {
             confirm_op: None,
             config,
             settings_open: false,
+            help_open: false,
             remote_busy: false,
             remote_kind: RemoteKind::Fetch,
             remote_progress: None,
@@ -1247,6 +1249,30 @@ impl App {
     pub fn terminal_focused(&self) -> bool {
         self.focus == Pane::Terminal
             || (self.focus == Pane::RightTab && matches!(self.active_tab, Tab::Editor))
+    }
+
+    pub fn any_modal_open(&self) -> bool {
+        self.settings_open
+            || self.confirm_discard.is_some()
+            || self.ref_prompt.is_some()
+            || self.confirm_delete.is_some()
+            || self.reset_prompt.is_some()
+            || self.confirm_op.is_some()
+            || self.search_confirm
+    }
+
+    pub fn help_context(&self) -> Option<crate::keys::Context> {
+        use crate::keys::Context;
+        match self.focus {
+            Pane::Sidebar => Some(Context::Sidebar),
+            Pane::Changes => Some(Context::Changes),
+            Pane::RightTab => match self.active_tab {
+                Tab::Graph => Some(Context::Graph),
+                Tab::Diff if self.selected_file.is_some() => Some(Context::Diff),
+                _ => None,
+            },
+            Pane::Terminal => None,
+        }
     }
 
     pub fn scroll_diff(&mut self, fraction: f32, down: bool) {

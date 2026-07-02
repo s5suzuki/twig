@@ -12,6 +12,7 @@ A lightweight Git GUI client for Linux, inspired by VS Code's *Git Graph* extens
 - **Neovim integration** 
 - **Embedded terminal / Neovim**
 - **Live worktree watching** 
+- **Vim-style keyboard navigation** (rebindable; press `?` for a live cheat-sheet)
 
 ## Build & run
 
@@ -30,6 +31,11 @@ twig <repo path>
 
 ## Keybindings
 
+Press `?` in any pane (outside a text field or the terminal) to pop up a
+cheat-sheet of the bindings currently in effect — the global ones plus those of
+the focused pane. It reads straight from the live keymap, so it always reflects
+your `config.toml` overrides.
+
 ### Defaults
 
 **Global** (any pane)
@@ -41,8 +47,39 @@ twig <repo path>
 | `Alt+k` | `focus-up` | Move focus up |
 | `Alt+j` | `focus-down` | Move focus down (to the terminal) |
 | `Tab` | `cycle-tab` | Cycle the right-hand tab (Graph → Diff → Search → Editor) |
+| `Ctrl+Tab` | `cycle-tab-fwd` | Next right-hand tab |
+| `Ctrl+Shift+Tab` | `cycle-tab-back` | Previous right-hand tab |
 | `` Ctrl+` `` | `toggle-shell` | Toggle the bottom terminal |
 | `Ctrl+Shift+f` | `open-search` | Open the Search tab (repository-wide search & replace) |
+| `Ctrl+o` | `nav-back` | Go back in navigation history (also mouse back button) |
+| `Ctrl+i` | `nav-forward` | Go forward in navigation history (also mouse forward button) |
+
+**Graph** (right pane, Graph tab)
+
+| Key | Action | Description |
+| --- | --- | --- |
+| `j` | `graph-down` | Move cursor down |
+| `k` | `graph-up` | Move cursor up |
+| `gg` | `graph-top` | Jump to the newest commit |
+| `G` | `graph-bottom` | Jump to the oldest commit |
+| `Ctrl+d` | `graph-half-page-down` | Move cursor half a page down |
+| `Ctrl+u` | `graph-half-page-up` | Move cursor half a page up |
+| `l` / `Enter` | `graph-open` | Open the commit / file under the cursor |
+| `e` | `graph-editor` | Open the file under the cursor in the editor |
+| `h` | `graph-collapse` | Collapse the expanded commit |
+| `Ctrl+.` / `Space .` | `graph-context-menu` | Open the context menu |
+| `o` | `graph-checkout` | Check out the commit / branch |
+| `b` | `graph-create-branch` | Create a branch at the commit |
+| `t` | `graph-create-tag` | Create a tag at the commit |
+| `y` | `graph-cherry-pick` | Cherry-pick the commit |
+| `i` | `graph-rebase-interactive` | Interactively rebase onto the commit |
+| `R` | `graph-reset` | Reset the current branch to the commit |
+| `V` | `graph-revert` | Revert the commit |
+| `B` | `graph-rebase-onto` | Rebase the current branch onto the commit |
+| `p` | `graph-push` | Push the current branch |
+| `f` | `graph-fetch` | Fetch from the remote |
+
+`graph-pull` is also available as an action (for `pull`) but is unbound by default — assign it a key in `config.toml` if you want it. Commands that rewrite history or touch the remote (reset, rebase, cherry-pick, revert, checkout, push, fetch) ask for confirmation first.
 
 **Diff** (right pane, Diff tab)
 
@@ -107,7 +144,7 @@ Both bars offer `Aa` (match case) and `.*` (regex, with `$1` capture references 
 
 ### Rebinding
 
-Add a `[keys.<context>]` table to `config.toml` (`$XDG_CONFIG_HOME/twig/config.toml`, or `~/.config/twig/config.toml`), where `<context>` is `global`, `sidebar`, `changes`, or `diff`.
+Add a `[keys.<context>]` table to `config.toml` (`$XDG_CONFIG_HOME/twig/config.toml`, or `~/.config/twig/config.toml`), where `<context>` is `global`, `sidebar`, `changes`, `diff`, or `graph`.
 Each entry is `"<chord>" = "<action>"`, using any action name from the tables above.
 
 - Modifiers: `alt`, `ctrl`, `shift`, `cmd` (e.g. `"ctrl+shift+d"`).

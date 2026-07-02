@@ -67,7 +67,10 @@ fn sidebar_nav(app: &mut App, ui: &mut egui::Ui, rows: &[SideRow]) -> Option<Nav
     if app.sidebar_cursor > last {
         app.sidebar_cursor = last;
     }
-    if app.focus != Pane::Sidebar || ui.ctx().memory(|m| m.focused().is_some()) {
+    if app.focus != Pane::Sidebar
+        || app.help_open
+        || ui.ctx().memory(|m| m.focused().is_some())
+    {
         return None;
     }
 

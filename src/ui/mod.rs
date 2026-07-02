@@ -22,8 +22,11 @@ enum Action {
 
 pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     app.track_nav();
-    handle_global_keys(app, ui);
-    diff_keys(app, ui);
+    help_key(app, ui);
+    if !app.help_open {
+        handle_global_keys(app, ui);
+        diff_keys(app, ui);
+    }
     if app.active_tab != Tab::Graph {
         app.graph_menu = None;
     }
@@ -449,6 +452,73 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     search_confirm_modal(app, ui);
 
     draw_settings(app, ui.ctx());
+    draw_help(app, ui.ctx());
+}
+
+fn help_key(app: &mut App, ui: &mut egui::Ui) {
+    if app.terminal_focused() || ui.ctx().memory(|m| m.focused().is_some()) {
+        return;
+    }
+    if !app.help_open && app.any_modal_open() {
+        return;
+    }
+    if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Questionmark)) {
+        app.help_open = !app.help_open;
+    } else if app.help_open
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        app.help_open = false;
+    }
+}
+
+fn draw_help(app: &mut App, ctx: &egui::Context) {
+    if !app.help_open {
+        return;
+    }
+    let focused = app.help_context();
+    let resp = egui::Modal::new(egui::Id::new("keybindings_help")).show(ctx, |ui| {
+        ui.set_width(560.0);
+        ui.horizontal(|ui| {
+            ui.heading("\u{f11c}  Keybindings");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.weak("? or Esc to close");
+            });
+        });
+        ui.add_space(4.0);
+        ui.label("Bindings active in the focused pane, plus global ones.");
+        ui.add_space(8.0);
+
+        egui::ScrollArea::vertical()
+            .max_height(ctx.content_rect().height() * 0.7)
+            .show(ui, |ui| {
+                if let Some(section) = focused {
+                    help_section(ui, &app.keymap, section);
+                    ui.add_space(10.0);
+                }
+                help_section(ui, &app.keymap, crate::keys::Context::Global);
+            });
+    });
+    if resp.should_close() {
+        app.help_open = false;
+    }
+}
+
+fn help_section(ui: &mut egui::Ui, keymap: &crate::keys::Keymap, ctx: crate::keys::Context) {
+    ui.label(egui::RichText::new(ctx.title()).strong());
+    ui.add_space(2.0);
+    egui::Grid::new(("help_grid", ctx.title()))
+        .num_columns(2)
+        .spacing([16.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for e in keymap.help_for(ctx) {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&e.keys).monospace()).selectable(false),
+                );
+                ui.add(egui::Label::new(e.desc).selectable(false));
+                ui.end_row();
+            }
+        });
 }
 
 fn ref_prompt_modal(app: &mut App, ui: &mut egui::Ui) {
@@ -1220,7 +1290,8 @@ fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
         return false;
     }
 
-    if app.confirm_discard.is_some()
+    if app.help_open
+        || app.confirm_discard.is_some()
         || app.ref_prompt.is_some()
         || app.confirm_delete.is_some()
         || app.reset_prompt.is_some()
@@ -1501,6 +1572,7 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
         app.changes_cursor = last;
     }
     if app.focus != Pane::Changes
+        || app.help_open
         || app.confirm_discard.is_some()
         || ui.ctx().memory(|m| m.focused().is_some())
     {
