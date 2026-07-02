@@ -349,6 +349,9 @@ pub struct App {
 
 impl App {
     pub fn new(path: PathBuf) -> Self {
+        // Absolute root: a relative `.`/`..` makes the watcher's gitignore matcher
+        // panic on absolute event paths, silently killing change detection.
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
         let config = Config::load();
         let keymap = Keymap::from_config(&config.keys);
         let mut app = Self {
