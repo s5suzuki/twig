@@ -1682,7 +1682,8 @@ fn draw_changes(app: &mut App, ui: &mut egui::Ui) -> Option<Action> {
 
     let sel = app.selected_file.clone();
     let cursor = app.changes_cursor;
-    render_rows(ui, &rows, 0, cursor, sel.as_ref(), &mut action);
+    let scroll = std::mem::take(&mut app.changes_scroll_pending);
+    render_rows(ui, &rows, 0, cursor, scroll, sel.as_ref(), &mut action);
     action
 }
 
@@ -1719,6 +1720,7 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
     let e = has(Cmd::ChangesEdit);
     let d = has(Cmd::ChangesDiscard);
 
+    let before = app.changes_cursor;
     if to_bottom {
         app.changes_cursor = last;
     }
@@ -1804,20 +1806,25 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
         && let NavKind::File { path, .. } = &cur.kind {
             action = Some(Action::RequestDiscard(path.clone()));
         }
+    if app.changes_cursor != before {
+        app.changes_scroll_pending = true;
+    }
     action
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_rows(
     ui: &mut egui::Ui,
     rows: &[NavRow],
     base: usize,
     cursor: usize,
+    scroll: bool,
     sel: Option<&(String, bool)>,
     action: &mut Option<Action>,
 ) {
     for (i, row) in rows.iter().enumerate() {
         let is_cursor = base + i == cursor;
-        match &row.kind {
+        let rect = match &row.kind {
             NavKind::Group { open, count, paths } => {
                 render_group_row(ui, row.staged, *open, *count, paths, is_cursor, action)
             }
@@ -1846,6 +1853,9 @@ fn render_rows(
                 sel,
                 action,
             ),
+        };
+        if is_cursor && scroll {
+            ui.scroll_to_rect(rect, None);
         }
     }
 }
@@ -1858,7 +1868,7 @@ fn render_group_row(
     paths: &[String],
     is_cursor: bool,
     action: &mut Option<Action>,
-) {
+) -> egui::Rect {
     let w = ui.available_width().max(40.0);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 20.0), egui::Sense::click());
     let hovered = ui.rect_contains_pointer(rect);
@@ -1909,6 +1919,7 @@ fn render_group_row(
     if !btn_clicked && resp.clicked() {
         set_group_open(ui.ctx(), staged, !open);
     }
+    rect
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1922,7 +1933,7 @@ fn render_dir_row(
     depth: usize,
     is_cursor: bool,
     action: &mut Option<Action>,
-) {
+) -> egui::Rect {
     let w = ui.available_width().max(40.0);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 18.0), egui::Sense::click());
     let hovered = ui.rect_contains_pointer(rect);
@@ -1978,6 +1989,7 @@ fn render_dir_row(
     if !btn_clicked && resp.clicked() {
         set_dir_open(ui.ctx(), salt, !open);
     }
+    rect
 }
 
 fn collect_paths(dir: &TreeDir) -> Vec<String> {
@@ -2003,7 +2015,7 @@ fn render_file_row(
     is_cursor: bool,
     sel: Option<&(String, bool)>,
     action: &mut Option<Action>,
-) {
+) -> egui::Rect {
     let is_sel = matches!(sel, Some((p, s)) if p == path && *s == staged);
 
     let w = ui.available_width().max(40.0);
@@ -2075,6 +2087,7 @@ fn render_file_row(
             *action = Some(Action::Select(path.to_string(), staged));
         }
     }
+    rect
 }
 
 fn marker_color(kind: StatusKind) -> egui::Color32 {

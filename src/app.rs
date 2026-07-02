@@ -308,6 +308,7 @@ pub struct App {
 
     pub focus: Pane,
     pub changes_cursor: usize,
+    pub changes_scroll_pending: bool,
     pub sidebar_cursor: usize,
     pub graph_cursor: usize,
     pub graph_scroll_pending: bool,
@@ -397,6 +398,7 @@ impl App {
             pending_shell_cmd: None,
             focus: Pane::Changes,
             changes_cursor: 0,
+            changes_scroll_pending: false,
             sidebar_cursor: 0,
             graph_cursor: 0,
             graph_scroll_pending: false,
