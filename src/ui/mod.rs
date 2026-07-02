@@ -1343,6 +1343,10 @@ fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
     {
         ui.ctx().memory_mut(|m| m.surrender_focus(id));
     }
+
+    if moved && app.terminal_focused() {
+        ui.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Text(_))));
+    }
 }
 
 fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
