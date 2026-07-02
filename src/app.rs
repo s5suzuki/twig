@@ -570,6 +570,7 @@ impl App {
                     rows: Vec::new(),
                     note: Some(format!("diff failed: {e}")),
                     conflict: false,
+                    rename: false,
                 };
                 self.diff_sig = 0;
                 self.diff_ver = self.diff_ver.wrapping_add(1);
@@ -931,6 +932,9 @@ impl App {
     }
 
     pub fn apply_line_selection(&mut self) {
+        if self.diff.rename {
+            return;
+        }
         let Some((path, staged)) = self.selected_file.clone() else {
             return;
         };
@@ -984,6 +988,7 @@ impl App {
             rows: Vec::new(),
             note: Some("Select a file".to_string()),
             conflict: false,
+            rename: false,
         };
         self.diff_ver = self.diff_ver.wrapping_add(1);
     }
@@ -1028,6 +1033,7 @@ impl App {
                     rows: Vec::new(),
                     note: Some(format!("file diff failed: {e}")),
                     conflict: false,
+                    rename: false,
                 }
             }
         }
@@ -1277,6 +1283,9 @@ impl App {
     }
 
     pub fn toggle_hunk(&mut self, hunk_index: usize) {
+        if self.diff.rename {
+            return;
+        }
         let Some((path, staged)) = self.selected_file.clone() else {
             return;
         };
@@ -1430,10 +1439,20 @@ impl App {
     }
 
     pub fn discard_changes(&mut self, path: &str) {
-        if let Err(e) = repo::discard(&self.selected, &[path.to_string()]) {
+        let paths = self.entry_paths(path);
+        if let Err(e) = repo::discard(&self.selected, &paths) {
             self.error = Some(format!("Failed to discard changes: {e}"));
         }
         self.after_index_change();
+    }
+
+    fn entry_paths(&self, path: &str) -> Vec<String> {
+        self.staged
+            .iter()
+            .chain(self.unstaged.iter())
+            .find(|e| e.path == path)
+            .map(|e| e.paths())
+            .unwrap_or_else(|| vec![path.to_string()])
     }
 
     pub fn stage(&mut self, paths: Vec<String>) {
@@ -2120,6 +2139,7 @@ fn empty_diff() -> FileDiff {
         rows: Vec::new(),
         note: None,
         conflict: false,
+        rename: false,
     }
 }
 

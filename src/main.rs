@@ -511,10 +511,11 @@ fn main() -> eframe::Result<()> {
         }
         Some(op @ ("--stage" | "--unstage" | "--discard" | "--commit")) => {
             let path = PathBuf::from(&args[2]);
+            let paths: Vec<String> = args[3..].to_vec();
             let res = match op {
-                "--stage" => repo::stage(&path, std::slice::from_ref(&args[3])),
-                "--unstage" => repo::unstage(&path, std::slice::from_ref(&args[3])),
-                "--discard" => repo::discard(&path, std::slice::from_ref(&args[3])),
+                "--stage" => repo::stage(&path, &paths),
+                "--unstage" => repo::unstage(&path, &paths),
+                "--discard" => repo::discard(&path, &paths),
                 _ => repo::commit(&path, &args[3]),
             };
             match res {

@@ -32,7 +32,17 @@ impl StatusKind {
 
 pub struct StatusEntry {
     pub path: String,
+    pub old_path: Option<String>,
     pub kind: StatusKind,
+}
+
+impl StatusEntry {
+    pub fn paths(&self) -> Vec<String> {
+        match &self.old_path {
+            Some(old) if old != &self.path => vec![old.clone(), self.path.clone()],
+            _ => vec![self.path.clone()],
+        }
+    }
 }
 
 pub fn load_status(path: &Path) -> Result<(Vec<StatusEntry>, Vec<StatusEntry>), git2::Error> {
@@ -44,7 +54,10 @@ fn collect_status(repo: &Repository) -> Result<(Vec<StatusEntry>, Vec<StatusEntr
     let submodules = submodule_paths(repo);
 
     let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .renames_head_to_index(true)
+        .renames_index_to_workdir(true);
     let statuses = repo.statuses(Some(&mut opts))?;
 
     let mut staged = Vec::new();
@@ -57,25 +70,47 @@ fn collect_status(repo: &Repository) -> Result<(Vec<StatusEntry>, Vec<StatusEntr
         if s.contains(Status::CONFLICTED) {
             unstaged.push(StatusEntry {
                 path,
+                old_path: None,
                 kind: StatusKind::Conflicted,
             });
             continue;
         }
 
         if let Some(kind) = index_kind(s) {
+            let old_path = rename_old_path(kind, entry.head_to_index());
             staged.push(StatusEntry {
-                path: path.clone(),
+                path: rename_new_path(kind, entry.head_to_index(), &path),
+                old_path,
                 kind: if is_sub { StatusKind::Submodule } else { kind },
             });
         }
         if let Some(kind) = worktree_kind(s) {
+            let old_path = rename_old_path(kind, entry.index_to_workdir());
             unstaged.push(StatusEntry {
-                path,
+                path: rename_new_path(kind, entry.index_to_workdir(), &path),
+                old_path,
                 kind: if is_sub { StatusKind::Submodule } else { kind },
             });
         }
     }
     Ok((staged, unstaged))
+}
+
+fn rename_old_path(kind: StatusKind, delta: Option<git2::DiffDelta>) -> Option<String> {
+    if kind != StatusKind::Renamed {
+        return None;
+    }
+    delta
+        .and_then(|d| d.old_file().path().map(|p| p.to_string_lossy().into_owned()))
+}
+
+fn rename_new_path(kind: StatusKind, delta: Option<git2::DiffDelta>, fallback: &str) -> String {
+    if kind != StatusKind::Renamed {
+        return fallback.to_string();
+    }
+    delta
+        .and_then(|d| d.new_file().path().map(|p| p.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 fn submodule_paths(repo: &Repository) -> HashSet<String> {
@@ -89,14 +124,14 @@ fn submodule_paths(repo: &Repository) -> HashSet<String> {
 }
 
 fn index_kind(s: Status) -> Option<StatusKind> {
-    if s.contains(Status::INDEX_NEW) {
+    if s.contains(Status::INDEX_RENAMED) {
+        Some(StatusKind::Renamed)
+    } else if s.contains(Status::INDEX_NEW) {
         Some(StatusKind::New)
     } else if s.contains(Status::INDEX_MODIFIED) {
         Some(StatusKind::Modified)
     } else if s.contains(Status::INDEX_DELETED) {
         Some(StatusKind::Deleted)
-    } else if s.contains(Status::INDEX_RENAMED) {
-        Some(StatusKind::Renamed)
     } else if s.contains(Status::INDEX_TYPECHANGE) {
         Some(StatusKind::Typechange)
     } else {
@@ -105,14 +140,14 @@ fn index_kind(s: Status) -> Option<StatusKind> {
 }
 
 fn worktree_kind(s: Status) -> Option<StatusKind> {
-    if s.contains(Status::WT_NEW) {
+    if s.contains(Status::WT_RENAMED) {
+        Some(StatusKind::Renamed)
+    } else if s.contains(Status::WT_NEW) {
         Some(StatusKind::New)
     } else if s.contains(Status::WT_MODIFIED) {
         Some(StatusKind::Modified)
     } else if s.contains(Status::WT_DELETED) {
         Some(StatusKind::Deleted)
-    } else if s.contains(Status::WT_RENAMED) {
-        Some(StatusKind::Renamed)
     } else if s.contains(Status::WT_TYPECHANGE) {
         Some(StatusKind::Typechange)
     } else {

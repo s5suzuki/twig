@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use git2::{ApplyLocation, ApplyOptions, Diff, DiffOptions, Oid, Patch, Repository};
+use git2::{
+    ApplyLocation, ApplyOptions, Diff, DiffFindOptions, DiffOptions, Oid, Patch, Repository,
+};
 
 use super::status::StatusKind;
 
@@ -39,6 +41,7 @@ pub struct FileDiff {
     pub note: Option<String>,
 
     pub conflict: bool,
+    pub rename: bool,
 }
 
 pub struct CommitFile {
@@ -83,6 +86,31 @@ fn hunk_headers(diff: &Diff) -> Result<Vec<String>, git2::Error> {
     Ok(out)
 }
 
+fn renamed_old_path(
+    repo: &Repository,
+    mode: DiffMode,
+    file: &str,
+) -> Result<Option<String>, git2::Error> {
+    let mut opts = DiffOptions::new();
+    let mut diff = make_diff(repo, mode, &mut opts)?;
+    let mut find = DiffFindOptions::new();
+    find.renames(true);
+    diff.find_similar(Some(&mut find))?;
+
+    for delta in diff.deltas() {
+        if delta.status() != git2::Delta::Renamed {
+            continue;
+        }
+        let new_p = delta.new_file().path().map(|p| p.to_string_lossy().into_owned());
+        if new_p.as_deref() != Some(file) {
+            continue;
+        }
+        let old_p = delta.old_file().path().map(|p| p.to_string_lossy().into_owned());
+        return Ok(old_p.filter(|o| o != file));
+    }
+    Ok(None)
+}
+
 pub fn file_diff(repo_path: &Path, file: &str, mode: DiffMode) -> Result<FileDiff, git2::Error> {
     let repo = Repository::open(repo_path)?;
 
@@ -90,20 +118,41 @@ pub fn file_diff(repo_path: &Path, file: &str, mode: DiffMode) -> Result<FileDif
         return Ok(d);
     }
 
+    let old = renamed_old_path(&repo, mode, file)?;
+    let scoped = |opts: &mut DiffOptions| {
+        opts.pathspec(file);
+        if let Some(o) = &old {
+            opts.pathspec(o);
+        }
+    };
+    let find_renames = |diff: &mut Diff| -> Result<(), git2::Error> {
+        if old.is_some() {
+            let mut find = DiffFindOptions::new();
+            find.renames(true);
+            diff.find_similar(Some(&mut find))?;
+        }
+        Ok(())
+    };
+
     let headers = {
         let mut opts = DiffOptions::new();
-        opts.pathspec(file);
+        scoped(&mut opts);
         opts.context_lines(0);
-        let zero = make_diff(&repo, mode, &mut opts)?;
+        let mut zero = make_diff(&repo, mode, &mut opts)?;
+        find_renames(&mut zero)?;
         hunk_headers(&zero)?
     };
 
     let mut opts = DiffOptions::new();
-    opts.pathspec(file);
+    scoped(&mut opts);
     opts.context_lines(1_000_000_000);
-    let diff = make_diff(&repo, mode, &mut opts)?;
+    let mut diff = make_diff(&repo, mode, &mut opts)?;
+    find_renames(&mut diff)?;
 
     let mut rows = Vec::new();
+    if let Some(o) = &old {
+        rows.push(DiffRow::FileHeader(format!("{o}  →  {file}")));
+    }
     let mut block = 0usize;
     for idx in 0..diff.deltas().len() {
         let Some(patch) = Patch::from_diff(&diff, idx)? else {
@@ -148,6 +197,7 @@ pub fn file_diff(repo_path: &Path, file: &str, mode: DiffMode) -> Result<FileDif
         rows,
         note,
         conflict: false,
+        rename: old.is_some(),
     })
 }
 
@@ -189,6 +239,7 @@ fn conflict_file_diff(repo: &Repository, file: &str) -> Result<Option<FileDiff>,
         rows,
         note: None,
         conflict: true,
+        rename: false,
     }))
 }
 
@@ -271,6 +322,7 @@ pub fn commit_file_diff(repo_path: &Path, oid: Oid, file: &str) -> Result<FileDi
         rows,
         note,
         conflict: false,
+        rename: false,
     })
 }
 
@@ -318,6 +370,7 @@ pub fn commit_diff(repo_path: &Path, oid: Oid) -> Result<FileDiff, git2::Error> 
         rows,
         note,
         conflict: false,
+        rename: false,
     })
 }
 

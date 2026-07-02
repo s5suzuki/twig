@@ -305,6 +305,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                 Tab::Diff => {
                     let file_sel = app.selected_file.clone();
                     let conflict = app.diff.conflict;
+                    let rename = app.diff.rename;
                     if let Some((path, staged)) = file_sel.clone() {
                         ui.horizontal(|ui| {
                             if ui.button("\u{e7c5}  Open in Neovim").clicked() {
@@ -314,6 +315,11 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(0xff, 0xb8, 0x6c),
                                     "\u{f071}  Conflict — resolve in the editor, then stage",
+                                );
+                            } else if rename {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(0x6c, 0x9c, 0xff),
+                                    "\u{f0c5}  Renamed — stage or discard the whole file",
                                 );
                             } else if let Some((lo, hi)) = app.diff_highlight() {
                                 let n = hi.saturating_sub(lo) + 1;
@@ -365,7 +371,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         None
                     };
 
-                    let hunk_ctl = if conflict {
+                    let hunk_ctl = if conflict || rename {
                         None
                     } else {
                         file_sel.as_ref().map(|(_, staged)| *staged)
@@ -1460,6 +1466,7 @@ struct TreeDir {
 struct Leaf {
     name: String,
     path: String,
+    old_path: Option<String>,
     kind: StatusKind,
 }
 
@@ -1475,6 +1482,7 @@ fn build_tree(entries: &[StatusEntry]) -> TreeDir {
         cur.files.push(Leaf {
             name: file[0].to_string(),
             path: e.path.clone(),
+            old_path: e.old_path.clone(),
             kind: e.kind,
         });
     }
@@ -1502,6 +1510,7 @@ enum NavKind {
     File {
         name: String,
         path: String,
+        old_path: Option<String>,
         kind: StatusKind,
     },
 }
@@ -1562,6 +1571,7 @@ fn build_nav_rows(
             kind: NavKind::File {
                 name: leaf.name.clone(),
                 path: leaf.path.clone(),
+                old_path: leaf.old_path.clone(),
                 kind: leaf.kind,
             },
         });
@@ -1570,9 +1580,16 @@ fn build_nav_rows(
 
 fn nav_paths(row: &NavRow) -> Vec<String> {
     match &row.kind {
-        NavKind::File { path, .. } => vec![path.clone()],
+        NavKind::File { path, old_path, .. } => file_paths(path, old_path.as_deref()),
         NavKind::Dir { paths, .. } => paths.clone(),
         NavKind::Group { paths, .. } => paths.clone(),
+    }
+}
+
+fn file_paths(path: &str, old_path: Option<&str>) -> Vec<String> {
+    match old_path {
+        Some(old) if old != path => vec![old.to_string(), path.to_string()],
+        _ => vec![path.to_string()],
     }
 }
 
@@ -1760,8 +1777,22 @@ fn render_rows(
             } => render_dir_row(
                 ui, row.staged, salt, name, *open, paths, row.depth, is_cursor, action,
             ),
-            NavKind::File { name, path, kind } => render_file_row(
-                ui, row.staged, name, path, *kind, row.depth, is_cursor, sel, action,
+            NavKind::File {
+                name,
+                path,
+                old_path,
+                kind,
+            } => render_file_row(
+                ui,
+                row.staged,
+                name,
+                path,
+                old_path.as_deref(),
+                *kind,
+                row.depth,
+                is_cursor,
+                sel,
+                action,
             ),
         }
     }
@@ -1903,7 +1934,7 @@ fn collect_paths(dir: &TreeDir) -> Vec<String> {
         out.extend(collect_paths(sub));
     }
     for leaf in &dir.files {
-        out.push(leaf.path.clone());
+        out.extend(file_paths(&leaf.path, leaf.old_path.as_deref()));
     }
     out
 }
@@ -1914,6 +1945,7 @@ fn render_file_row(
     staged: bool,
     name: &str,
     path: &str,
+    old_path: Option<&str>,
     kind: StatusKind,
     depth: usize,
     is_cursor: bool,
@@ -1935,10 +1967,14 @@ fn render_file_row(
             .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
     }
     let x = rect.left() + depth as f32 * INDENT;
+    let label = match old_path {
+        Some(old) if old != path => format!("{} → {name}", basename(old)),
+        _ => name.to_string(),
+    };
     ui.painter().text(
         egui::pos2(x + 6.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        name,
+        &label,
         egui::FontId::proportional(13.0),
         visuals.text_color(),
     );
@@ -1974,9 +2010,9 @@ fn render_file_row(
         if ui.put(btn_rect, egui::Button::new(btn)).clicked() {
             btn_clicked = true;
             *action = Some(if staged {
-                Action::Unstage(vec![path.to_string()])
+                Action::Unstage(file_paths(path, old_path))
             } else {
-                Action::Stage(vec![path.to_string()])
+                Action::Stage(file_paths(path, old_path))
             });
         }
     }
