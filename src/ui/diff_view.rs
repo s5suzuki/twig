@@ -184,7 +184,9 @@ fn render_rows(
     let lineno_w = digits as f32 * char_w + 8.0;
     let text_w = ((content_w - 2.0 * lineno_w - 3.0 * COL_GAP - 2.0) / 2.0).max(40.0);
     let default_color = ui.visuals().text_color();
-    let min_row_h = ui.ctx().fonts_mut(|f| f.row_height(&FontId::monospace(12.0)));
+    let min_row_h = ui
+        .ctx()
+        .fonts_mut(|f| f.row_height(&FontId::monospace(12.0)));
     cache.sync(ver, dark_mode);
 
     for (i, row) in diff.rows.iter().enumerate() {
@@ -255,14 +257,34 @@ fn render_rows(
                 let left_syn = hl.left.get(&i).map(Vec::as_slice).unwrap_or(&[]);
                 let right_syn = hl.right.get(&i).map(Vec::as_slice).unwrap_or(&[]);
 
-                let colors = CellColors { default_color, hl_color, cur_color };
+                let colors = CellColors {
+                    default_color,
+                    hl_color,
+                    cur_color,
+                };
                 let left_galley = cell_galley(
-                    ui, &mut cache.left, i, left.as_deref(), text_w, left_syn, &[],
-                    left_emph, del_emph(dark), colors,
+                    ui,
+                    &mut cache.left,
+                    i,
+                    left.as_deref(),
+                    text_w,
+                    left_syn,
+                    &[],
+                    left_emph,
+                    del_emph(dark),
+                    colors,
                 );
                 let right_galley = cell_galley(
-                    ui, &mut cache.right, i, right.as_deref(), text_w, right_syn, find_hl,
-                    right_emph, add_emph(dark), colors,
+                    ui,
+                    &mut cache.right,
+                    i,
+                    right.as_deref(),
+                    text_w,
+                    right_syn,
+                    find_hl,
+                    right_emph,
+                    add_emph(dark),
+                    colors,
                 );
 
                 let row_resp = ui.horizontal_top(|ui| {
@@ -270,7 +292,14 @@ fn render_rows(
                     lineno_cell(ui, *old_no, lineno_w);
                     paint_cell(ui, &left_galley, text_w, left_bg, min_row_h, default_color);
                     lineno_cell(ui, *new_no, lineno_w);
-                    paint_cell(ui, &right_galley, text_w, right_bg, min_row_h, default_color);
+                    paint_cell(
+                        ui,
+                        &right_galley,
+                        text_w,
+                        right_bg,
+                        min_row_h,
+                        default_color,
+                    );
                 });
                 let rrect = row_resp.response.rect;
                 if let Some(nav) = nav {
@@ -350,16 +379,20 @@ fn handle_drag(ui: &egui::Ui, line_rects: &[(usize, Rect)], resp: &mut DiffRespo
 
     if pressed
         && let Some(p) = pos
-            && clip.contains(p) && p.x >= left && p.x <= right
-                && let Some((i, _)) = row_exact(p.y) {
-                    ui.memory_mut(|m| m.data.insert_temp(id, *i));
-                }
+        && clip.contains(p)
+        && p.x >= left
+        && p.x <= right
+        && let Some((i, _)) = row_exact(p.y)
+    {
+        ui.memory_mut(|m| m.data.insert_temp(id, *i));
+    }
     if down
         && let Some(anchor) = ui.memory(|m| m.data.get_temp::<usize>(id))
-            && let Some(p) = pos {
-                let y = p.y.clamp(clip.top(), clip.bottom() - 1.0);
-                resp.drag_select = Some((anchor, row_clamped(y)));
-            }
+        && let Some(p) = pos
+    {
+        let y = p.y.clamp(clip.top(), clip.bottom() - 1.0);
+        resp.drag_select = Some((anchor, row_clamped(y)));
+    }
     if released {
         ui.memory_mut(|m| m.data.remove::<usize>(id));
     }
@@ -428,7 +461,9 @@ fn build_galley(
     let font = FontId::monospace(12.0);
     let color = colors.default_color;
     if syn.is_empty() && find.is_empty() && emph.is_empty() {
-        return ui.painter().layout(text.to_owned(), font, color, f32::INFINITY);
+        return ui
+            .painter()
+            .layout(text.to_owned(), font, color, f32::INFINITY);
     }
 
     let len = text.len();
@@ -456,10 +491,16 @@ fn build_galley(
             .unwrap_or(color)
     };
     let bg_at = |pos: usize| -> Option<Color32> {
-        if let Some(c) = find
-            .iter()
-            .find(|&&(s, e, _)| pos >= s && pos < e)
-            .map(|&(_, _, is_cur)| if is_cur { colors.cur_color } else { colors.hl_color })
+        if let Some(c) =
+            find.iter()
+                .find(|&&(s, e, _)| pos >= s && pos < e)
+                .map(|&(_, _, is_cur)| {
+                    if is_cur {
+                        colors.cur_color
+                    } else {
+                        colors.hl_color
+                    }
+                })
         {
             return Some(c);
         }
@@ -550,11 +591,11 @@ fn draw_ruler(
     }
 
     if (resp.clicked() || resp.dragged())
-        && let Some(p) = resp.interact_pointer_pos() {
-            let frac = ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
-            let target =
-                (frac * content_h - view_h / 2.0).clamp(0.0, (content_h - view_h).max(0.0));
-            ui.memory_mut(|m| m.data.insert_temp(target_id, target));
-            ui.ctx().request_repaint();
-        }
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        let frac = ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+        let target = (frac * content_h - view_h / 2.0).clamp(0.0, (content_h - view_h).max(0.0));
+        ui.memory_mut(|m| m.data.insert_temp(target_id, target));
+        ui.ctx().request_repaint();
+    }
 }

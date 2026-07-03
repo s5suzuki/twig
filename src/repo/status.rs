@@ -100,8 +100,11 @@ fn rename_old_path(kind: StatusKind, delta: Option<git2::DiffDelta>) -> Option<S
     if kind != StatusKind::Renamed {
         return None;
     }
-    delta
-        .and_then(|d| d.old_file().path().map(|p| p.to_string_lossy().into_owned()))
+    delta.and_then(|d| {
+        d.old_file()
+            .path()
+            .map(|p| p.to_string_lossy().into_owned())
+    })
 }
 
 fn rename_new_path(kind: StatusKind, delta: Option<git2::DiffDelta>, fallback: &str) -> String {
@@ -109,7 +112,11 @@ fn rename_new_path(kind: StatusKind, delta: Option<git2::DiffDelta>, fallback: &
         return fallback.to_string();
     }
     delta
-        .and_then(|d| d.new_file().path().map(|p| p.to_string_lossy().into_owned()))
+        .and_then(|d| {
+            d.new_file()
+                .path()
+                .map(|p| p.to_string_lossy().into_owned())
+        })
         .unwrap_or_else(|| fallback.to_string())
 }
 

@@ -240,9 +240,7 @@ pub fn build(repo_path: &Path, limit: usize) -> Result<Graph, git2::Error> {
 fn uncommitted_count(repo: &Repository) -> usize {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
-    repo.statuses(Some(&mut opts))
-        .map(|s| s.len())
-        .unwrap_or(0)
+    repo.statuses(Some(&mut opts)).map(|s| s.len()).unwrap_or(0)
 }
 
 fn collect_refs(repo: &Repository) -> HashMap<Oid, Vec<RefLabel>> {
@@ -289,13 +287,13 @@ fn collect_refs(repo: &Repository) -> HashMap<Oid, Vec<RefLabel>> {
             .ok()
             .and_then(|h| h.peel_to_commit().ok())
             .map(|c| c.id())
-        {
-            map.entry(oid).or_default().push(RefLabel {
-                name: "HEAD".to_string(),
-                kind: RefKind::DetachedHead,
-                is_head: true,
-            });
-        }
+    {
+        map.entry(oid).or_default().push(RefLabel {
+            name: "HEAD".to_string(),
+            kind: RefKind::DetachedHead,
+            is_head: true,
+        });
+    }
 
     map
 }

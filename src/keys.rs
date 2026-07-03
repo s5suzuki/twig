@@ -117,73 +117,257 @@ pub enum Action {
 
 impl Action {
     const TABLE: &'static [(Action, &'static str, &'static str)] = &[
-        (Action::FocusLeft, "focus-left", "Focus the pane on the left"),
-        (Action::FocusRight, "focus-right", "Focus the pane on the right"),
+        (
+            Action::FocusLeft,
+            "focus-left",
+            "Focus the pane on the left",
+        ),
+        (
+            Action::FocusRight,
+            "focus-right",
+            "Focus the pane on the right",
+        ),
         (Action::FocusUp, "focus-up", "Focus the pane above"),
-        (Action::FocusDown, "focus-down", "Focus the pane below (terminal)"),
+        (
+            Action::FocusDown,
+            "focus-down",
+            "Focus the pane below (terminal)",
+        ),
         (Action::CycleTab, "cycle-tab", "Cycle the right-hand tab"),
         (Action::CycleTabFwd, "cycle-tab-fwd", "Next right-hand tab"),
-        (Action::CycleTabBack, "cycle-tab-back", "Previous right-hand tab"),
-        (Action::ToggleShell, "toggle-shell", "Toggle the bottom terminal"),
+        (
+            Action::CycleTabBack,
+            "cycle-tab-back",
+            "Previous right-hand tab",
+        ),
+        (
+            Action::ToggleShell,
+            "toggle-shell",
+            "Toggle the bottom terminal",
+        ),
         (Action::OpenSearch, "open-search", "Open the Search tab"),
         (Action::NavBack, "nav-back", "Go back in navigation history"),
-        (Action::NavForward, "nav-forward", "Go forward in navigation history"),
-        (Action::DiffFind, "diff-find", "Toggle the in-file find & replace bar"),
+        (
+            Action::NavForward,
+            "nav-forward",
+            "Go forward in navigation history",
+        ),
+        (
+            Action::DiffFind,
+            "diff-find",
+            "Toggle the in-file find & replace bar",
+        ),
         (Action::DiffDown, "diff-down", "Move cursor down one line"),
         (Action::DiffUp, "diff-up", "Move cursor up one line"),
         (Action::DiffTop, "diff-top", "Jump to the first line"),
         (Action::DiffBottom, "diff-bottom", "Jump to the last line"),
-        (Action::DiffToggleVisual, "diff-toggle-visual", "Toggle visual (line) selection"),
-        (Action::DiffClearVisual, "diff-clear-visual", "Clear the selection"),
-        (Action::DiffStageSelection, "diff-stage-selection", "Stage the selected lines"),
-        (Action::DiffUnstageSelection, "diff-unstage-selection", "Unstage the selected lines"),
-        (Action::DiffDiscardSelection, "diff-discard-selection", "Discard the selected lines from the working tree"),
-        (Action::DiffHalfPageDown, "diff-half-page-down", "Scroll half a page down"),
-        (Action::DiffHalfPageUp, "diff-half-page-up", "Scroll half a page up"),
-        (Action::DiffPageDown, "diff-page-down", "Scroll one page down"),
+        (
+            Action::DiffToggleVisual,
+            "diff-toggle-visual",
+            "Toggle visual (line) selection",
+        ),
+        (
+            Action::DiffClearVisual,
+            "diff-clear-visual",
+            "Clear the selection",
+        ),
+        (
+            Action::DiffStageSelection,
+            "diff-stage-selection",
+            "Stage the selected lines",
+        ),
+        (
+            Action::DiffUnstageSelection,
+            "diff-unstage-selection",
+            "Unstage the selected lines",
+        ),
+        (
+            Action::DiffDiscardSelection,
+            "diff-discard-selection",
+            "Discard the selected lines from the working tree",
+        ),
+        (
+            Action::DiffHalfPageDown,
+            "diff-half-page-down",
+            "Scroll half a page down",
+        ),
+        (
+            Action::DiffHalfPageUp,
+            "diff-half-page-up",
+            "Scroll half a page up",
+        ),
+        (
+            Action::DiffPageDown,
+            "diff-page-down",
+            "Scroll one page down",
+        ),
         (Action::DiffPageUp, "diff-page-up", "Scroll one page up"),
-        (Action::DiffEditor, "diff-editor", "Open the current file in the editor"),
+        (
+            Action::DiffEditor,
+            "diff-editor",
+            "Open the current file in the editor",
+        ),
         (Action::ChangesTop, "changes-top", "Move cursor to the top"),
-        (Action::ChangesBottom, "changes-bottom", "Move cursor to the bottom"),
+        (
+            Action::ChangesBottom,
+            "changes-bottom",
+            "Move cursor to the bottom",
+        ),
         (Action::ChangesDown, "changes-down", "Move cursor down"),
         (Action::ChangesUp, "changes-up", "Move cursor up"),
-        (Action::ChangesCollapse, "changes-collapse", "Collapse a folder/group, or step out"),
-        (Action::ChangesExpand, "changes-expand", "Expand a folder/group, or open a file"),
-        (Action::ChangesActivate, "changes-activate", "Open a file, or toggle a folder/group"),
-        (Action::ChangesStageToggle, "changes-stage-toggle", "Stage/unstage the item under the cursor"),
-        (Action::ChangesEdit, "changes-edit", "Open the file in the editor"),
-        (Action::ChangesDiscard, "changes-discard", "Discard changes to the file"),
-        (Action::ChangesHalfPageDown, "changes-half-page-down", "Move cursor half a page down"),
-        (Action::ChangesHalfPageUp, "changes-half-page-up", "Move cursor half a page up"),
+        (
+            Action::ChangesCollapse,
+            "changes-collapse",
+            "Collapse a folder/group, or step out",
+        ),
+        (
+            Action::ChangesExpand,
+            "changes-expand",
+            "Expand a folder/group, or open a file",
+        ),
+        (
+            Action::ChangesActivate,
+            "changes-activate",
+            "Open a file, or toggle a folder/group",
+        ),
+        (
+            Action::ChangesStageToggle,
+            "changes-stage-toggle",
+            "Stage/unstage the item under the cursor",
+        ),
+        (
+            Action::ChangesEdit,
+            "changes-edit",
+            "Open the file in the editor",
+        ),
+        (
+            Action::ChangesDiscard,
+            "changes-discard",
+            "Discard changes to the file",
+        ),
+        (
+            Action::ChangesHalfPageDown,
+            "changes-half-page-down",
+            "Move cursor half a page down",
+        ),
+        (
+            Action::ChangesHalfPageUp,
+            "changes-half-page-up",
+            "Move cursor half a page up",
+        ),
         (Action::SidebarTop, "sidebar-top", "Move cursor to the top"),
-        (Action::SidebarBottom, "sidebar-bottom", "Move cursor to the bottom"),
+        (
+            Action::SidebarBottom,
+            "sidebar-bottom",
+            "Move cursor to the bottom",
+        ),
         (Action::SidebarDown, "sidebar-down", "Move cursor down"),
         (Action::SidebarUp, "sidebar-up", "Move cursor up"),
-        (Action::SidebarSelect, "sidebar-select", "Select the repository under the cursor"),
-        (Action::SidebarExpand, "sidebar-expand", "Expand a node, or select it"),
-        (Action::SidebarCollapse, "sidebar-collapse", "Collapse a node, or step out"),
-        (Action::SidebarHalfPageDown, "sidebar-half-page-down", "Move cursor half a page down"),
-        (Action::SidebarHalfPageUp, "sidebar-half-page-up", "Move cursor half a page up"),
+        (
+            Action::SidebarSelect,
+            "sidebar-select",
+            "Select the repository under the cursor",
+        ),
+        (
+            Action::SidebarExpand,
+            "sidebar-expand",
+            "Expand a node, or select it",
+        ),
+        (
+            Action::SidebarCollapse,
+            "sidebar-collapse",
+            "Collapse a node, or step out",
+        ),
+        (
+            Action::SidebarHalfPageDown,
+            "sidebar-half-page-down",
+            "Move cursor half a page down",
+        ),
+        (
+            Action::SidebarHalfPageUp,
+            "sidebar-half-page-up",
+            "Move cursor half a page up",
+        ),
         (Action::GraphDown, "graph-down", "Move cursor down"),
         (Action::GraphUp, "graph-up", "Move cursor up"),
         (Action::GraphTop, "graph-top", "Jump to the newest commit"),
-        (Action::GraphBottom, "graph-bottom", "Jump to the oldest commit"),
-        (Action::GraphHalfPageDown, "graph-half-page-down", "Move cursor half a page down"),
-        (Action::GraphHalfPageUp, "graph-half-page-up", "Move cursor half a page up"),
-        (Action::GraphOpen, "graph-open", "Open the commit / file under the cursor"),
-        (Action::GraphEditor, "graph-editor", "Open the file under the cursor in the editor"),
-        (Action::GraphCollapse, "graph-collapse", "Collapse the expanded commit"),
-        (Action::GraphContextMenu, "graph-context-menu", "Open the context menu"),
-        (Action::GraphReset, "graph-reset", "Reset the current branch to the commit"),
-        (Action::GraphCreateBranch, "graph-create-branch", "Create a branch at the commit"),
-        (Action::GraphCreateTag, "graph-create-tag", "Create a tag at the commit"),
-        (Action::GraphCherryPick, "graph-cherry-pick", "Cherry-pick the commit"),
+        (
+            Action::GraphBottom,
+            "graph-bottom",
+            "Jump to the oldest commit",
+        ),
+        (
+            Action::GraphHalfPageDown,
+            "graph-half-page-down",
+            "Move cursor half a page down",
+        ),
+        (
+            Action::GraphHalfPageUp,
+            "graph-half-page-up",
+            "Move cursor half a page up",
+        ),
+        (
+            Action::GraphOpen,
+            "graph-open",
+            "Open the commit / file under the cursor",
+        ),
+        (
+            Action::GraphEditor,
+            "graph-editor",
+            "Open the file under the cursor in the editor",
+        ),
+        (
+            Action::GraphCollapse,
+            "graph-collapse",
+            "Collapse the expanded commit",
+        ),
+        (
+            Action::GraphContextMenu,
+            "graph-context-menu",
+            "Open the context menu",
+        ),
+        (
+            Action::GraphReset,
+            "graph-reset",
+            "Reset the current branch to the commit",
+        ),
+        (
+            Action::GraphCreateBranch,
+            "graph-create-branch",
+            "Create a branch at the commit",
+        ),
+        (
+            Action::GraphCreateTag,
+            "graph-create-tag",
+            "Create a tag at the commit",
+        ),
+        (
+            Action::GraphCherryPick,
+            "graph-cherry-pick",
+            "Cherry-pick the commit",
+        ),
         (Action::GraphRevert, "graph-revert", "Revert the commit"),
-        (Action::GraphRebaseOnto, "graph-rebase-onto", "Rebase the current branch onto the commit"),
-        (Action::GraphRebaseInteractive, "graph-rebase-interactive", "Interactively rebase onto the commit"),
-        (Action::GraphCheckout, "graph-checkout", "Check out the commit / branch"),
+        (
+            Action::GraphRebaseOnto,
+            "graph-rebase-onto",
+            "Rebase the current branch onto the commit",
+        ),
+        (
+            Action::GraphRebaseInteractive,
+            "graph-rebase-interactive",
+            "Interactively rebase onto the commit",
+        ),
+        (
+            Action::GraphCheckout,
+            "graph-checkout",
+            "Check out the commit / branch",
+        ),
         (Action::GraphPush, "graph-push", "Push the current branch"),
-        (Action::GraphForcePush, "graph-force-push", "Force-push the current branch (with confirmation)"),
+        (
+            Action::GraphForcePush,
+            "graph-force-push",
+            "Force-push the current branch (with confirmation)",
+        ),
         (Action::GraphFetch, "graph-fetch", "Fetch from the remote"),
         (Action::GraphPull, "graph-pull", "Pull the current branch"),
     ];
@@ -358,13 +542,7 @@ impl Keymap {
         let shift = Modifiers::SHIFT;
         let ctrl = Modifiers::CTRL;
         let mut km = Keymap {
-            maps: [
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ],
+            maps: [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()],
         };
 
         km.push(Global, alt, H, FocusLeft);
@@ -429,7 +607,12 @@ impl Keymap {
         km.push(Graph, n, E, GraphEditor);
         km.push(Graph, n, H, GraphCollapse);
         km.push(Graph, ctrl, Period, GraphContextMenu);
-        km.push_seq(Graph, Chord::new(n, Space), Chord::new(n, Period), GraphContextMenu);
+        km.push_seq(
+            Graph,
+            Chord::new(n, Space),
+            Chord::new(n, Period),
+            GraphContextMenu,
+        );
         km.push(Graph, shift, R, GraphReset);
         km.push(Graph, n, B, GraphCreateBranch);
         km.push(Graph, n, T, GraphCreateTag);
@@ -599,13 +782,9 @@ mod tests {
                 .any(|b| b.chord.key == Key::E && b.action == Action::DiffHalfPageDown)
         );
         // ctrl+d default survives because the override for it was invalid
-        assert!(
-            diff_map
-                .iter()
-                .any(|b| b.chord.key == Key::D
-                    && b.chord.mods.ctrl
-                    && b.action == Action::DiffHalfPageDown)
-        );
+        assert!(diff_map.iter().any(|b| b.chord.key == Key::D
+            && b.chord.mods.ctrl
+            && b.action == Action::DiffHalfPageDown));
     }
 
     fn key_event(key: Key, mods: Modifiers) -> egui::Event {

@@ -148,9 +148,9 @@ fn sidebar_nav(app: &mut App, ui: &mut egui::Ui, rows: &[SideRow]) -> Option<Nav
                 && let Some(p) = (0..app.sidebar_cursor)
                     .rev()
                     .find(|&i| rows[i].depth < depth)
-                {
-                    app.sidebar_cursor = p;
-                }
+            {
+                app.sidebar_cursor = p;
+            }
         }
     }
     nav

@@ -205,7 +205,12 @@ fn is_interesting_git_path(path: &Path) -> bool {
             return matches!(
                 c.as_os_str().to_str(),
                 Some(
-                    "refs" | "HEAD" | "ORIG_HEAD" | "MERGE_HEAD" | "FETCH_HEAD" | "index"
+                    "refs"
+                        | "HEAD"
+                        | "ORIG_HEAD"
+                        | "MERGE_HEAD"
+                        | "FETCH_HEAD"
+                        | "index"
                         | "packed-refs"
                 )
             );
@@ -232,11 +237,9 @@ mod tests {
                 continue;
             }
             let name = fd.file_name();
-            let info = std::fs::read_to_string(format!(
-                "/proc/self/fdinfo/{}",
-                name.to_string_lossy()
-            ))
-            .unwrap_or_default();
+            let info =
+                std::fs::read_to_string(format!("/proc/self/fdinfo/{}", name.to_string_lossy()))
+                    .unwrap_or_default();
             for line in info.lines() {
                 if let Some(rest) = line.strip_prefix("inotify ") {
                     for tok in rest.split_whitespace() {
@@ -266,8 +269,7 @@ mod tests {
         std::fs::create_dir(tmp.join("existing")).unwrap();
 
         let ctx = egui::Context::default();
-        let mut w =
-            WorktreeWatcher::new(&tmp, &ctx, Arc::new(AtomicBool::new(false))).unwrap();
+        let mut w = WorktreeWatcher::new(&tmp, &ctx, Arc::new(AtomicBool::new(false))).unwrap();
         assert!(w.watched_top.contains(&tmp.join("existing")));
 
         std::fs::create_dir(tmp.join("newdir")).unwrap();
@@ -276,13 +278,25 @@ mod tests {
 
         let watched = inotify_inodes();
         assert!(w.watched_top.contains(&tmp.join("newdir")));
-        assert!(watched.contains(&ino(&tmp.join("newdir"))), "newdir must be inotify-watched");
-        assert!(!w.watched_top.contains(&tmp.join("node_modules")), "gitignored dir must be skipped");
-        assert!(!w.watched_top.iter().any(|p| p.ends_with(".git")), ".git must be skipped");
+        assert!(
+            watched.contains(&ino(&tmp.join("newdir"))),
+            "newdir must be inotify-watched"
+        );
+        assert!(
+            !w.watched_top.contains(&tmp.join("node_modules")),
+            "gitignored dir must be skipped"
+        );
+        assert!(
+            !w.watched_top.iter().any(|p| p.ends_with(".git")),
+            ".git must be skipped"
+        );
 
         std::fs::remove_dir_all(tmp.join("newdir")).unwrap();
         w.rescan_new_toplevel(&tmp);
-        assert!(!w.watched_top.contains(&tmp.join("newdir")), "deleted dir must be pruned");
+        assert!(
+            !w.watched_top.contains(&tmp.join("newdir")),
+            "deleted dir must be pruned"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -312,7 +326,10 @@ mod tests {
             ".git/refs/heads/main.lock",
             ".git/COMMIT_EDITMSG",
         ] {
-            assert!(!is_interesting_git_path(&root.join(p)), "{p} should be dropped");
+            assert!(
+                !is_interesting_git_path(&root.join(p)),
+                "{p} should be dropped"
+            );
         }
     }
 
@@ -335,10 +352,16 @@ mod tests {
         std::fs::write(git.join("logs/HEAD"), "x\n").unwrap();
         std::fs::write(git.join("objects/ab/deadbeef"), "x\n").unwrap();
         std::thread::sleep(Duration::from_millis(600));
-        assert!(!w.take_dirty(), "objects/logs churn must not wake the watcher");
+        assert!(
+            !w.take_dirty(),
+            "objects/logs churn must not wake the watcher"
+        );
 
-        std::fs::write(git.join("refs/heads/main"), "0000000000000000000000000000000000000000\n")
-            .unwrap();
+        std::fs::write(
+            git.join("refs/heads/main"),
+            "0000000000000000000000000000000000000000\n",
+        )
+        .unwrap();
         std::thread::sleep(Duration::from_millis(600));
         assert!(w.take_dirty(), "external ref update must be detected");
 

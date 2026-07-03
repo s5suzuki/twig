@@ -78,7 +78,11 @@ pub fn replace_all_in_text(matcher: &Matcher, text: &str, replacement: &str) -> 
         if i > 0 {
             out.push('\n');
         }
-        count += matcher.re.find_iter(seg).filter(|m| m.start() != m.end()).count();
+        count += matcher
+            .re
+            .find_iter(seg)
+            .filter(|m| m.start() != m.end())
+            .count();
         let replaced = if matcher.literal_replace {
             matcher.re.replace_all(seg, regex::NoExpand(replacement))
         } else {

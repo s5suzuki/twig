@@ -174,7 +174,10 @@ impl RemoteKind {
     }
 
     fn rediscovers(self) -> bool {
-        matches!(self, RemoteKind::SubmoduleInit | RemoteKind::SubmoduleUpdate)
+        matches!(
+            self,
+            RemoteKind::SubmoduleInit | RemoteKind::SubmoduleUpdate
+        )
     }
 }
 
@@ -226,9 +229,15 @@ impl GraphOp {
 
     pub fn detail(self) -> &'static str {
         match self {
-            GraphOp::CherryPick => "Apply this commit's changes onto the current branch as a new commit.",
-            GraphOp::Revert => "Create a new commit on the current branch that undoes this commit's changes.",
-            GraphOp::RebaseOnto => "Replay the current branch onto this commit. This rewrites the branch's commits.",
+            GraphOp::CherryPick => {
+                "Apply this commit's changes onto the current branch as a new commit."
+            }
+            GraphOp::Revert => {
+                "Create a new commit on the current branch that undoes this commit's changes."
+            }
+            GraphOp::RebaseOnto => {
+                "Replay the current branch onto this commit. This rewrites the branch's commits."
+            }
             GraphOp::Checkout => "Check out this commit directly (detached HEAD).",
         }
     }
@@ -488,8 +497,7 @@ impl App {
             let vp = i.viewport();
             (vp.occluded, vp.minimized, vp.focused)
         });
-        let hidden =
-            focused == Some(false) || occluded == Some(true) || minimized == Some(true);
+        let hidden = focused == Some(false) || occluded == Some(true) || minimized == Some(true);
 
         self.repaint_gate.store(!hidden, Ordering::Relaxed);
 
@@ -535,7 +543,11 @@ impl App {
                 self.error = Some(format!("Failed to read status: {e}"));
             }
         }
-        if self.selected_commit.as_ref().is_some_and(|(o, _)| o.is_zero()) {
+        if self
+            .selected_commit
+            .as_ref()
+            .is_some_and(|(o, _)| o.is_zero())
+        {
             let files = self.uncommitted_commit_files();
             if files.is_empty() {
                 self.clear_commit_selection();
@@ -734,15 +746,17 @@ impl App {
         self.search.results.clear();
         self.search.selected.clear();
         self.search.searched = true;
-        let matcher =
-            match search::Matcher::new(&self.search.query, self.search.regex, self.search.case_sensitive)
-            {
-                Ok(m) => m,
-                Err(e) => {
-                    self.search.error = Some(e);
-                    return;
-                }
-            };
+        let matcher = match search::Matcher::new(
+            &self.search.query,
+            self.search.regex,
+            self.search.case_sensitive,
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                self.search.error = Some(e);
+                return;
+            }
+        };
         let hits = search::search_repo(&self.selected, &matcher);
         for f in &hits {
             for l in &f.lines {
@@ -754,15 +768,17 @@ impl App {
 
     pub fn search_apply(&mut self) {
         self.search_confirm = false;
-        let matcher =
-            match search::Matcher::new(&self.search.query, self.search.regex, self.search.case_sensitive)
-            {
-                Ok(m) => m,
-                Err(e) => {
-                    self.search.error = Some(e);
-                    return;
-                }
-            };
+        let matcher = match search::Matcher::new(
+            &self.search.query,
+            self.search.regex,
+            self.search.case_sensitive,
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                self.search.error = Some(e);
+                return;
+            }
+        };
         let replacement = self.search.replace.clone();
         let mut errs = Vec::new();
         for f in &self.search.results {
@@ -813,8 +829,11 @@ impl App {
             return;
         };
         let all = self.search_file_all_selected(f);
-        let keys: Vec<(String, u32)> =
-            f.lines.iter().map(|l| (f.path.clone(), l.line_no)).collect();
+        let keys: Vec<(String, u32)> = f
+            .lines
+            .iter()
+            .map(|l| (f.path.clone(), l.line_no))
+            .collect();
         for k in keys {
             if all {
                 self.search.selected.remove(&k);
@@ -848,9 +867,10 @@ impl App {
             self.diff_cursor = last;
         }
         if let Some(a) = self.diff_anchor
-            && a > last {
-                self.diff_anchor = Some(last);
-            }
+            && a > last
+        {
+            self.diff_anchor = Some(last);
+        }
 
         if !self.diff.rows.is_empty() && !self.is_line_row(self.diff_cursor) {
             let fwd = (self.diff_cursor..=last).find(|&i| self.is_line_row(i));
@@ -870,18 +890,19 @@ impl App {
         let cur = self.diff_cursor.min(last);
 
         if !self.diff_scrolled_prev
-            && let Some((vt, vb)) = self.diff_visible {
-                if cur < vt {
-                    self.diff_cursor = vt;
-                    self.diff_scroll_pending = true;
-                    return;
-                }
-                if cur > vb {
-                    self.diff_cursor = vb;
-                    self.diff_scroll_pending = true;
-                    return;
-                }
+            && let Some((vt, vb)) = self.diff_visible
+        {
+            if cur < vt {
+                self.diff_cursor = vt;
+                self.diff_scroll_pending = true;
+                return;
             }
+            if cur > vb {
+                self.diff_cursor = vb;
+                self.diff_scroll_pending = true;
+                return;
+            }
+        }
         self.diff_cursor = self.step_line_row(cur, delta);
         self.diff_scroll_pending = true;
     }
@@ -1085,8 +1106,7 @@ impl App {
     }
 
     fn worktree_file_staged(&self, file: &str) -> bool {
-        !self.unstaged.iter().any(|e| e.path == file)
-            && self.staged.iter().any(|e| e.path == file)
+        !self.unstaged.iter().any(|e| e.path == file) && self.staged.iter().any(|e| e.path == file)
     }
 
     pub fn graph_items(&self) -> Vec<GraphItem> {
@@ -1186,7 +1206,10 @@ impl App {
         match item {
             GraphItem::Commit(row) => {
                 let oid = self.graph.rows[row].id;
-                let already = self.selected_commit.as_ref().is_some_and(|(o, _)| *o == oid);
+                let already = self
+                    .selected_commit
+                    .as_ref()
+                    .is_some_and(|(o, _)| *o == oid);
                 if !already {
                     self.load_commit(oid);
                     self.set_graph_cursor_to_commit(oid);
@@ -1226,7 +1249,11 @@ impl App {
             }
             GraphItem::Commit(row) => {
                 let oid = self.graph.rows[row].id;
-                if self.selected_commit.as_ref().is_some_and(|(o, _)| *o == oid) {
+                if self
+                    .selected_commit
+                    .as_ref()
+                    .is_some_and(|(o, _)| *o == oid)
+                {
                     self.clear_commit_selection();
                     self.diff = empty_diff();
                     self.diff_ver = self.diff_ver.wrapping_add(1);
@@ -2108,7 +2135,11 @@ impl App {
     }
 
     fn refresh_uncommitted_diff(&mut self) {
-        if !self.selected_commit.as_ref().is_some_and(|(o, _)| o.is_zero()) {
+        if !self
+            .selected_commit
+            .as_ref()
+            .is_some_and(|(o, _)| o.is_zero())
+        {
             return;
         }
         let Some(file) = self.selected_commit_file.clone() else {
@@ -2157,9 +2188,7 @@ fn set_node_expanded(node: &mut repo::RepoNode, path: &Path) -> bool {
         node.expanded = true;
         return true;
     }
-    node.children
-        .iter_mut()
-        .any(|c| set_node_expanded(c, path))
+    node.children.iter_mut().any(|c| set_node_expanded(c, path))
 }
 
 fn node_is_initialized(node: &repo::RepoNode, path: &Path) -> bool {
@@ -2169,10 +2198,7 @@ fn node_is_initialized(node: &repo::RepoNode, path: &Path) -> bool {
     node.children.iter().any(|c| node_is_initialized(c, path))
 }
 
-fn find_submodule_parent(
-    node: &repo::RepoNode,
-    target: &Path,
-) -> Option<(PathBuf, String)> {
+fn find_submodule_parent(node: &repo::RepoNode, target: &Path) -> Option<(PathBuf, String)> {
     for child in &node.children {
         if child.path == target {
             return Some((node.path.clone(), child.name.clone()));

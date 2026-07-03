@@ -157,9 +157,10 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                 app.flush_pending_shell_cmd();
                 let active = app.focus == Pane::Terminal;
                 if let Some(t) = &mut app.shell
-                    && t.ui(ui, active) {
-                        app.focus = Pane::Terminal;
-                    }
+                    && t.ui(ui, active)
+                {
+                    app.focus = Pane::Terminal;
+                }
             })
             .response
             .rect;
@@ -373,10 +374,11 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         app.find.recompute(&app.diff);
                         let mut fr = diff_view::FindRender::default();
                         for (i, m) in app.find.matches.iter().enumerate() {
-                            fr.rows
-                                .entry(m.row)
-                                .or_default()
-                                .push((m.start, m.end, i == app.find.current));
+                            fr.rows.entry(m.row).or_default().push((
+                                m.start,
+                                m.end,
+                                i == app.find.current,
+                            ));
                         }
                         Some(fr)
                     } else {
@@ -440,9 +442,10 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                     }
                     let active = app.focus == Pane::RightTab;
                     if let Some(t) = &mut app.term
-                        && t.ui(ui, active) {
-                            app.focus = Pane::RightTab;
-                        }
+                        && t.ui(ui, active)
+                    {
+                        app.focus = Pane::RightTab;
+                    }
                 }
                 Tab::Search => {
                     if let Some(search_view::SearchAction::OpenEditor(p)) =
@@ -741,10 +744,18 @@ fn find_bar(app: &mut App, ui: &mut egui::Ui) {
                 format!("{}/{}", app.find.current + 1, app.find.matches.len())
             };
             ui.add(egui::Label::new(status).truncate());
-            if ui.button("\u{f062}").on_hover_text("Previous (Shift+Enter)").clicked() {
+            if ui
+                .button("\u{f062}")
+                .on_hover_text("Previous (Shift+Enter)")
+                .clicked()
+            {
                 go_prev = true;
             }
-            if ui.button("\u{f063}").on_hover_text("Next (Enter)").clicked() {
+            if ui
+                .button("\u{f063}")
+                .on_hover_text("Next (Enter)")
+                .clicked()
+            {
                 go_next = true;
             }
             if ui.button("\u{f00d}").on_hover_text("Close (Esc)").clicked() {
@@ -1219,10 +1230,7 @@ fn remote_bar(app: &mut App, ui: &mut egui::Ui) {
                 app.push(&ctx, false);
             }
             push.context_menu(|ui| {
-                if ui
-                    .button("\u{f0aa}  Force push (current branch)")
-                    .clicked()
-                {
+                if ui.button("\u{f0aa}  Force push (current branch)").clicked() {
                     app.request_force_push();
                     ui.close();
                 }
@@ -1312,14 +1320,14 @@ fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
     let tab_cycles = app.focus == Pane::RightTab && app.active_tab != Tab::Editor;
     let right_tab_focus = app.focus == Pane::RightTab;
     let term_focus = app.terminal_focused();
-    let actions = app.keymap.poll(ui, Context::Global, &mut app.pending_prefix, |a| {
-        match a {
+    let actions = app
+        .keymap
+        .poll(ui, Context::Global, &mut app.pending_prefix, |a| match a {
             Action::CycleTab => tab_cycles,
             Action::CycleTabFwd | Action::CycleTabBack => right_tab_focus,
             Action::ToggleShell => !term_focus,
             _ => true,
-        }
-    });
+        });
 
     let mut moved = false;
     for a in actions {
@@ -1383,9 +1391,7 @@ fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
         app.nav_go_forward();
     }
 
-    if moved
-        && let Some(id) = ui.ctx().memory(|m| m.focused())
-    {
+    if moved && let Some(id) = ui.ctx().memory(|m| m.focused()) {
         ui.ctx().memory_mut(|m| m.surrender_focus(id));
     }
 
@@ -1458,10 +1464,7 @@ fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
         return false;
     }
 
-    if app.help_open
-        || app.any_modal_open()
-        || ui.ctx().memory(|m| m.focused().is_some())
-    {
+    if app.help_open || app.any_modal_open() || ui.ctx().memory(|m| m.focused().is_some()) {
         return false;
     }
 
@@ -1835,9 +1838,10 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
                     && let Some(p) = (0..app.changes_cursor).rev().find(|&i| {
                         rows[i].depth < depth
                             && matches!(rows[i].kind, NavKind::Dir { .. } | NavKind::Group { .. })
-                    }) {
-                        app.changes_cursor = p;
-                    }
+                    })
+                {
+                    app.changes_cursor = p;
+                }
             }
         }
     }
@@ -1848,15 +1852,15 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
             Action::Stage(nav_paths(cur))
         });
     }
-    if e
-        && let NavKind::File { path, .. } = &cur.kind {
-            app.focus = Pane::RightTab;
-            action = Some(Action::OpenEditor(path.clone()));
-        }
+    if e && let NavKind::File { path, .. } = &cur.kind {
+        app.focus = Pane::RightTab;
+        action = Some(Action::OpenEditor(path.clone()));
+    }
     if d && !cur.staged
-        && let NavKind::File { path, .. } = &cur.kind {
-            action = Some(Action::RequestDiscard(path.clone()));
-        }
+        && let NavKind::File { path, .. } = &cur.kind
+    {
+        action = Some(Action::RequestDiscard(path.clone()));
+    }
     if app.changes_cursor != before {
         app.changes_scroll_pending = true;
     }

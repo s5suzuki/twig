@@ -42,9 +42,10 @@ struct EventProxy {
 impl EventListener for EventProxy {
     fn send_event(&self, event: AlacEvent) {
         if let AlacEvent::PtyWrite(text) = event
-            && let Ok(mut o) = self.out.lock() {
-                o.extend_from_slice(text.as_bytes());
-            }
+            && let Ok(mut o) = self.out.lock()
+        {
+            o.extend_from_slice(text.as_bytes());
+        }
     }
 }
 
@@ -194,11 +195,12 @@ impl Term {
             self.parser.advance(&mut self.term, &bytes);
         }
         if let Ok(mut out) = self.proxy_out.lock()
-            && !out.is_empty() {
-                let _ = self.writer.write_all(&out);
-                let _ = self.writer.flush();
-                out.clear();
-            }
+            && !out.is_empty()
+        {
+            let _ = self.writer.write_all(&out);
+            let _ = self.writer.flush();
+            out.clear();
+        }
 
         let font = FontId::monospace(FONT_SIZE);
         let (cw, rh) = ui
@@ -434,8 +436,15 @@ impl Term {
                     let primary = button == egui::PointerButton::Primary;
                     if primary && (!report || modifiers.shift) {
                         if rect.contains(pos) && pressed {
-                            let (point, side) =
-                                pos_to_point(pos, rect, cw, rh, self.cols, self.rows, display_offset);
+                            let (point, side) = pos_to_point(
+                                pos,
+                                rect,
+                                cw,
+                                rh,
+                                self.cols,
+                                self.rows,
+                                display_offset,
+                            );
                             self.term.selection =
                                 Some(Selection::new(SelectionType::Simple, point, side));
                             self.selecting = true;
@@ -558,7 +567,10 @@ fn pos_to_point(
     } else {
         Side::Left
     };
-    (Point::new(Line(screen_row - display_offset), Column(col)), side)
+    (
+        Point::new(Line(screen_row - display_offset), Column(col)),
+        side,
+    )
 }
 
 fn pos_to_cell(
@@ -643,9 +655,10 @@ fn key_to_bytes(key: egui::Key, mods: &egui::Modifiers) -> Option<Vec<u8>> {
         Insert => b"\x1b[2~",
         _ => {
             if mods.ctrl
-                && let Some(c) = ctrl_byte(key) {
-                    return Some(vec![c]);
-                }
+                && let Some(c) = ctrl_byte(key)
+            {
+                return Some(vec![c]);
+            }
             return None;
         }
     };

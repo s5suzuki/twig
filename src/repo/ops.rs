@@ -479,12 +479,13 @@ fn conflict_paths(index: &Index) -> Vec<String> {
     if let Ok(conflicts) = index.conflicts() {
         for c in conflicts.flatten() {
             if let Some(entry) = c.our.or(c.their).or(c.ancestor)
-                && let Ok(p) = std::str::from_utf8(&entry.path) {
-                    let p = p.to_string();
-                    if !out.contains(&p) {
-                        out.push(p);
-                    }
+                && let Ok(p) = std::str::from_utf8(&entry.path)
+            {
+                let p = p.to_string();
+                if !out.contains(&p) {
+                    out.push(p);
                 }
+            }
         }
     }
     out
@@ -743,7 +744,10 @@ pub fn pull<F: FnMut(usize, usize)>(
 
 pub fn checkout_tracking(repo_path: &Path, remote_ref: &str) -> Result<(), git2::Error> {
     let repo = Repository::open(repo_path)?;
-    let local = remote_ref.split_once('/').map(|(_, b)| b).unwrap_or(remote_ref);
+    let local = remote_ref
+        .split_once('/')
+        .map(|(_, b)| b)
+        .unwrap_or(remote_ref);
 
     let obj = repo.revparse_single(&format!("refs/remotes/{remote_ref}"))?;
     let commit = obj.peel_to_commit()?;

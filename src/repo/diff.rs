@@ -104,11 +104,17 @@ fn renamed_old_path(
         if delta.status() != git2::Delta::Renamed {
             continue;
         }
-        let new_p = delta.new_file().path().map(|p| p.to_string_lossy().into_owned());
+        let new_p = delta
+            .new_file()
+            .path()
+            .map(|p| p.to_string_lossy().into_owned());
         if new_p.as_deref() != Some(file) {
             continue;
         }
-        let old_p = delta.old_file().path().map(|p| p.to_string_lossy().into_owned());
+        let old_p = delta
+            .old_file()
+            .path()
+            .map(|p| p.to_string_lossy().into_owned());
         return Ok(old_p.filter(|o| o != file));
     }
     Ok(None)
@@ -511,8 +517,16 @@ fn intra_emphasis(old: &str, new: &str) -> (Vec<Range<usize>>, Vec<Range<usize>>
         return (Vec::new(), Vec::new());
     }
 
-    let left = if p < old_end { vec![p..old_end] } else { Vec::new() };
-    let right = if p < new_end { vec![p..new_end] } else { Vec::new() };
+    let left = if p < old_end {
+        vec![p..old_end]
+    } else {
+        Vec::new()
+    };
+    let right = if p < new_end {
+        vec![p..new_end]
+    } else {
+        Vec::new()
+    };
     (left, right)
 }
 

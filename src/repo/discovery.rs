@@ -73,8 +73,8 @@ fn submodule_flags(parent: &Repository, name: &str) -> (bool, bool) {
                     | SubmoduleStatus::WD_INDEX_MODIFIED
                     | SubmoduleStatus::WD_UNTRACKED,
             );
-            let drifted = s
-                .intersects(SubmoduleStatus::WD_MODIFIED | SubmoduleStatus::INDEX_MODIFIED);
+            let drifted =
+                s.intersects(SubmoduleStatus::WD_MODIFIED | SubmoduleStatus::INDEX_MODIFIED);
             (dirty, drifted)
         }
         Err(_) => (false, false),

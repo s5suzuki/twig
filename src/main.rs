@@ -451,7 +451,11 @@ fn main() -> eframe::Result<()> {
             let res: Result<repo::SeqOutcome, git2::Error> = match op {
                 "--fetch" => repo::fetch(&path, &remote, progress).map(|()| repo::SeqOutcome::Done),
                 "--pull" => repo::pull(&path, &remote, progress),
-                _ => match args.get(4).cloned().or_else(|| repo::head_push_refspec(&path)) {
+                _ => match args
+                    .get(4)
+                    .cloned()
+                    .or_else(|| repo::head_push_refspec(&path))
+                {
                     Some(refspec) => {
                         repo::push(&path, &remote, std::slice::from_ref(&refspec), progress)
                             .map(|()| repo::SeqOutcome::Done)
@@ -796,16 +800,19 @@ fn selftest_search(path: &std::path::Path, pattern: &str) {
     app.search_run();
     let files = app.search.results.len();
     let lines: usize = app.search.results.iter().map(|f| f.lines.len()).sum();
-    println!("search '{pattern}': {files} file(s), {lines} line(s), selected={}", app.search.selected_count());
+    println!(
+        "search '{pattern}': {files} file(s), {lines} line(s), selected={}",
+        app.search.selected_count()
+    );
     frame(&mut app);
     println!("rendered Search tab OK (err={:?})", app.error);
 
-    let changed_hit = app
-        .search
-        .results
-        .iter()
-        .map(|f| f.path.clone())
-        .find(|p| app.unstaged.iter().chain(app.staged.iter()).any(|e| &e.path == p));
+    let changed_hit = app.search.results.iter().map(|f| f.path.clone()).find(|p| {
+        app.unstaged
+            .iter()
+            .chain(app.staged.iter())
+            .any(|e| &e.path == p)
+    });
     if let Some(first) = changed_hit {
         app.select_file(first.clone(), false);
         app.open_find();
@@ -818,7 +825,10 @@ fn selftest_search(path: &std::path::Path, pattern: &str) {
             app.find.matches.len()
         );
         app.find_next();
-        println!("find_next -> current={} cursor={}", app.find.current, app.diff_cursor);
+        println!(
+            "find_next -> current={} cursor={}",
+            app.find.current, app.diff_cursor
+        );
     }
 
     if let Some(f) = app.search.results.first() {
@@ -831,7 +841,11 @@ fn selftest_search(path: &std::path::Path, pattern: &str) {
         println!(
             "apply on {target}: changed={} now_matches={}",
             before != after,
-            app.search.results.iter().map(|f| f.lines.len()).sum::<usize>()
+            app.search
+                .results
+                .iter()
+                .map(|f| f.lines.len())
+                .sum::<usize>()
         );
     }
 }

@@ -322,7 +322,11 @@ pub fn draw(
     if kb_open {
         let kb_oid = cursor_commit
             .map(|i| graph.rows[i].id)
-            .or(if cursor_file.is_some() { selected } else { None });
+            .or(if cursor_file.is_some() {
+                selected
+            } else {
+                None
+            });
         if let (Some(oid), Some(r)) = (kb_oid, cursor_rect)
             && !oid.is_zero()
         {
@@ -369,14 +373,15 @@ pub fn draw(
     }
 
     if resp.clicked()
-        && let Some(p) = resp.interact_pointer_pos() {
-            if let Some((_, _, path)) = file_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b) {
-                return Some(GraphAction::File(path.clone()));
-            }
-            if let Some((_, _, oid)) = commit_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b) {
-                return Some(GraphAction::Commit(*oid));
-            }
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        if let Some((_, _, path)) = file_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b) {
+            return Some(GraphAction::File(path.clone()));
         }
+        if let Some((_, _, oid)) = commit_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b) {
+            return Some(GraphAction::Commit(*oid));
+        }
+    }
     None
 }
 
@@ -388,8 +393,14 @@ fn build_menu_entries(
         && let Some(idx) = parse_stash_index(&stash.name)
     {
         let entries = vec![
-            ("\u{f0ab}  Pop (apply + drop)".to_string(), GraphAction::StashPop(idx)),
-            ("\u{f0c5}  Apply (keep)".to_string(), GraphAction::StashApply(idx)),
+            (
+                "\u{f0ab}  Pop (apply + drop)".to_string(),
+                GraphAction::StashPop(idx),
+            ),
+            (
+                "\u{f0c5}  Apply (keep)".to_string(),
+                GraphAction::StashApply(idx),
+            ),
             ("\u{f1f8}  Drop".to_string(), GraphAction::StashDrop(idx)),
         ];
         return (stash.name.clone(), entries);

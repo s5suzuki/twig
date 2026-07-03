@@ -79,17 +79,18 @@ pub fn install(ctx: &egui::Context, mono_key: &str) {
     }
 
     if let Some(path) = pick_mono(mono_key).and_then(MonoFont::path)
-        && let Ok(bytes) = std::fs::read(path) {
-            let name = "mono_primary".to_string();
-            fonts
-                .font_data
-                .insert(name.clone(), Arc::new(FontData::from_owned(bytes)));
-            fonts
-                .families
-                .entry(FontFamily::Monospace)
-                .or_default()
-                .insert(0, name);
-        }
+        && let Ok(bytes) = std::fs::read(path)
+    {
+        let name = "mono_primary".to_string();
+        fonts
+            .font_data
+            .insert(name.clone(), Arc::new(FontData::from_owned(bytes)));
+        fonts
+            .families
+            .entry(FontFamily::Monospace)
+            .or_default()
+            .insert(0, name);
+    }
 
     if let Some((name, data)) = load_first("nf_fallback", NF_FALLBACK) {
         fonts.font_data.insert(name.clone(), Arc::new(data));
