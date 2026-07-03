@@ -37,6 +37,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     if app.take_external_change() {
         app.refresh_from_disk();
     }
+    app.poll_diff_recheck(ui.ctx());
 
     let repos_rect = egui::Panel::left("repos")
         .default_size(200.0)

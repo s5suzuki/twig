@@ -14,6 +14,8 @@ use crate::search;
 
 pub const LIST_PAGE: usize = 10;
 const NAV_HISTORY_MAX: usize = 100;
+const DIFF_RECHECK_TRIES: u8 = 5;
+const DIFF_RECHECK_INTERVAL: f64 = 0.1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -298,6 +300,9 @@ pub struct App {
     pub diff_galleys: crate::ui::diff_view::DiffGalleyCache,
     diff_ver: u64,
     diff_sig: u64,
+    diff_recheck: u8,
+    diff_recheck_at: f64,
+    in_recheck: bool,
     diff_hl_sig: Option<(u64, bool)>,
     pub diff_cursor: usize,
     pub diff_anchor: Option<usize>,
@@ -397,6 +402,9 @@ impl App {
             diff_galleys: crate::ui::diff_view::DiffGalleyCache::default(),
             diff_ver: 0,
             diff_sig: 0,
+            diff_recheck: 0,
+            diff_recheck_at: 0.0,
+            in_recheck: false,
             diff_hl_sig: None,
             diff_cursor: 0,
             diff_anchor: None,
@@ -611,16 +619,18 @@ impl App {
                     note: Some(format!("diff failed: {e}")),
                     conflict: false,
                     rename: false,
+                    binary: false,
                 };
                 self.diff_sig = 0;
                 self.diff_ver = self.diff_ver.wrapping_add(1);
                 self.find.invalidate();
             }
         }
-        self.selected_file = Some((file, staged));
+        self.selected_file = Some((file.clone(), staged));
         self.clear_commit_selection();
 
         self.clamp_diff_nav();
+        self.arm_diff_recheck(&file);
     }
 
     pub fn diff_version(&self) -> u64 {
@@ -1127,6 +1137,7 @@ impl App {
             note: Some("Select a file".to_string()),
             conflict: false,
             rename: false,
+            binary: false,
         };
         self.diff_ver = self.diff_ver.wrapping_add(1);
     }
@@ -1172,16 +1183,20 @@ impl App {
                     note: Some(format!("file diff failed: {e}")),
                     conflict: false,
                     rename: false,
+                    binary: false,
                 }
             }
         }
         self.selected_file = None;
-        self.selected_commit_file = Some(file);
+        self.selected_commit_file = Some(file.clone());
         self.diff_ver = self.diff_ver.wrapping_add(1);
         self.reset_diff_nav();
         self.clamp_diff_nav();
         self.diff_scroll_pending = true;
         self.active_tab = Tab::Diff;
+        if oid.is_zero() {
+            self.arm_diff_recheck(&file);
+        }
     }
 
     fn worktree_file_staged(&self, file: &str) -> bool {
@@ -2239,6 +2254,66 @@ impl App {
         self.refresh_uncommitted_diff();
     }
 
+    fn worktree_file_changed(&self, file: &str) -> bool {
+        self.unstaged.iter().any(|e| e.path == file)
+            || self.staged.iter().any(|e| e.path == file)
+    }
+
+    fn arm_diff_recheck(&mut self, file: &str) {
+        if self.in_recheck {
+            return;
+        }
+        let transient = self.diff.rows.is_empty()
+            && !self.diff.binary
+            && self.diff.note.as_deref() == Some("(no changes)")
+            && self.worktree_file_changed(file);
+        if transient {
+            self.diff_recheck = DIFF_RECHECK_TRIES;
+            self.diff_recheck_at = 0.0;
+        } else {
+            self.diff_recheck = 0;
+        }
+    }
+
+    pub fn poll_diff_recheck(&mut self, ctx: &egui::Context) {
+        if self.diff_recheck == 0 {
+            return;
+        }
+        let visible = self.repaint_gate.load(Ordering::Relaxed);
+        let interval = std::time::Duration::from_secs_f64(DIFF_RECHECK_INTERVAL);
+        let now = ctx.input(|i| i.time);
+        if self.diff_recheck_at == 0.0 {
+            self.diff_recheck_at = now + DIFF_RECHECK_INTERVAL;
+        }
+        if now < self.diff_recheck_at {
+            if visible {
+                ctx.request_repaint_after(interval);
+            }
+            return;
+        }
+
+        self.diff_recheck -= 1;
+        self.diff_recheck_at = now + DIFF_RECHECK_INTERVAL;
+        self.in_recheck = true;
+        if let Some((file, staged)) = self.selected_file.clone() {
+            self.load_file_diff(file, staged);
+        } else if self
+            .selected_commit
+            .as_ref()
+            .is_some_and(|(o, _)| o.is_zero())
+        {
+            self.refresh_uncommitted_diff();
+        }
+        self.in_recheck = false;
+
+        if !self.diff.rows.is_empty() {
+            self.diff_recheck = 0;
+        }
+        if self.diff_recheck > 0 && visible {
+            ctx.request_repaint_after(interval);
+        }
+    }
+
     fn refresh_uncommitted_diff(&mut self) {
         if !self
             .selected_commit
@@ -2264,6 +2339,7 @@ impl App {
                 self.diff_ver = self.diff_ver.wrapping_add(1);
                 self.find.invalidate();
             }
+            self.arm_diff_recheck(&file);
         }
     }
 }
@@ -2321,11 +2397,115 @@ fn empty_diff() -> FileDiff {
         note: None,
         conflict: false,
         rename: false,
+        binary: false,
     }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         crate::ui::draw(self, ui);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_cmd(dir: &std::path::Path, args: &[&str]) {
+        let ok = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?} failed");
+    }
+
+    fn advance(ctx: &egui::Context, t: f64) {
+        let input = egui::RawInput {
+            time: Some(t),
+            ..Default::default()
+        };
+        ctx.begin_pass(input);
+        let _ = ctx.end_pass();
+    }
+
+    #[test]
+    fn transient_empty_new_file_diff_recovers_via_recheck() {
+        let tmp = std::env::temp_dir().join(format!("twig-recheck-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        run_cmd(&tmp, &["init", "-q"]);
+        run_cmd(&tmp, &["config", "user.email", "a@b.c"]);
+        run_cmd(&tmp, &["config", "user.name", "a"]);
+        std::fs::write(tmp.join("base.txt"), "base\n").unwrap();
+        run_cmd(&tmp, &["add", "base.txt"]);
+        run_cmd(&tmp, &["commit", "-qm", "init"]);
+
+        let content = "line1\nline2\nline3\n";
+        std::fs::write(tmp.join("new.txt"), content).unwrap();
+
+        let mut app = App::new(tmp.clone());
+        assert!(
+            app.worktree_file_changed("new.txt"),
+            "untracked file must be seen as changed"
+        );
+
+        app.load_file_diff("new.txt".to_string(), false);
+        assert!(!app.diff.rows.is_empty(), "settled file must diff");
+        assert_eq!(app.diff_recheck, 0, "settled diff must not arm recheck");
+
+        // Simulate the editor mid-write window: the file is momentarily empty.
+        std::fs::write(tmp.join("new.txt"), "").unwrap();
+        app.load_file_diff("new.txt".to_string(), false);
+        assert!(app.diff.rows.is_empty());
+        assert_eq!(app.diff.note.as_deref(), Some("(no changes)"));
+        assert_eq!(
+            app.diff_recheck, DIFF_RECHECK_TRIES,
+            "transient empty diff must arm recheck"
+        );
+
+        // The write settles; the recheck loop must recover the real diff.
+        std::fs::write(tmp.join("new.txt"), content).unwrap();
+        let ctx = egui::Context::default();
+        let mut t = 1.0;
+        for _ in 0..30 {
+            advance(&ctx, t);
+            app.poll_diff_recheck(&ctx);
+            if app.diff_recheck == 0 {
+                break;
+            }
+            t += DIFF_RECHECK_INTERVAL * 2.0;
+        }
+        assert_eq!(app.diff_recheck, 0, "recheck must terminate");
+        assert!(
+            !app.diff.rows.is_empty(),
+            "recheck must recover the real diff, not the transient empty"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn binary_new_file_does_not_arm_recheck() {
+        let tmp = std::env::temp_dir().join(format!("twig-recheck-bin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        run_cmd(&tmp, &["init", "-q"]);
+        run_cmd(&tmp, &["config", "user.email", "a@b.c"]);
+        run_cmd(&tmp, &["config", "user.name", "a"]);
+        std::fs::write(tmp.join("base.txt"), "base\n").unwrap();
+        run_cmd(&tmp, &["add", "base.txt"]);
+        run_cmd(&tmp, &["commit", "-qm", "init"]);
+
+        std::fs::write(tmp.join("blob.bin"), b"x\x00y\x00z\x00").unwrap();
+
+        let mut app = App::new(tmp.clone());
+        app.load_file_diff("blob.bin".to_string(), false);
+        assert!(app.diff.binary, "binary flag must be set");
+        assert_eq!(app.diff.note.as_deref(), Some("(binary)"));
+        assert_eq!(app.diff_recheck, 0, "binary file must not arm recheck");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -45,6 +45,7 @@ pub struct FileDiff {
 
     pub conflict: bool,
     pub rename: bool,
+    pub binary: bool,
 }
 
 pub struct CommitFile {
@@ -243,11 +244,16 @@ pub fn file_diff(repo_path: &Path, file: &str, mode: DiffMode) -> Result<FileDif
     if let Some(o) = &old {
         rows.push(DiffRow::FileHeader(format!("{o}  →  {file}")));
     }
+    let mut binary = false;
     let mut block = 0usize;
     for idx in 0..diff.deltas().len() {
         let Some(patch) = Patch::from_diff(&diff, idx)? else {
+            binary = true;
             continue;
         };
+        if let Some(delta) = diff.get_delta(idx) {
+            binary |= delta.flags().is_binary();
+        }
         for h in 0..patch.num_hunks() {
             let (_hunk, line_count) = patch.hunk(h)?;
 
@@ -280,16 +286,19 @@ pub fn file_diff(repo_path: &Path, file: &str, mode: DiffMode) -> Result<FileDif
         }
     }
 
-    let note = if rows.is_empty() {
-        Some("(no changes, or binary)".to_string())
-    } else {
+    let note = if !rows.is_empty() {
         None
+    } else if binary {
+        Some("(binary)".to_string())
+    } else {
+        Some("(no changes)".to_string())
     };
     Ok(FileDiff {
         rows,
         note,
         conflict: false,
         rename: old.is_some(),
+        binary,
     })
 }
 
@@ -332,6 +341,7 @@ fn conflict_file_diff(repo: &Repository, file: &str) -> Result<Option<FileDiff>,
         note: None,
         conflict: true,
         rename: false,
+        binary: false,
     }))
 }
 
@@ -415,6 +425,7 @@ pub fn commit_file_diff(repo_path: &Path, oid: Oid, file: &str) -> Result<FileDi
         note,
         conflict: false,
         rename: false,
+        binary: false,
     })
 }
 
@@ -463,6 +474,7 @@ pub fn commit_diff(repo_path: &Path, oid: Oid) -> Result<FileDiff, git2::Error> 
         note,
         conflict: false,
         rename: false,
+        binary: false,
     })
 }
 
