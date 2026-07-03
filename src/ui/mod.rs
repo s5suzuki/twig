@@ -1310,10 +1310,12 @@ fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
     }
 
     let tab_cycles = app.focus == Pane::RightTab && app.active_tab != Tab::Editor;
+    let right_tab_focus = app.focus == Pane::RightTab;
     let term_focus = app.terminal_focused();
     let actions = app.keymap.poll(ui, Context::Global, &mut app.pending_prefix, |a| {
         match a {
             Action::CycleTab => tab_cycles,
+            Action::CycleTabFwd | Action::CycleTabBack => right_tab_focus,
             Action::ToggleShell => !term_focus,
             _ => true,
         }

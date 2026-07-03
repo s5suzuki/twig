@@ -371,9 +371,9 @@ impl Keymap {
         km.push(Global, alt, L, FocusRight);
         km.push(Global, alt, K, FocusUp);
         km.push(Global, alt, J, FocusDown);
-        km.push(Global, n, Tab, CycleTab);
-        km.push(Global, ctrl, Tab, CycleTabFwd);
-        km.push(Global, ctrl.plus(shift), Tab, CycleTabBack);
+        km.push(Global, n, Tab, CycleTabFwd);
+        km.push(Global, shift, Tab, CycleTabBack);
+        km.push(Global, ctrl, Tab, CycleTab);
         km.push(Global, ctrl, Backtick, ToggleShell);
         km.push(Global, ctrl.plus(shift), F, OpenSearch);
         km.push(Global, ctrl, O, NavBack);

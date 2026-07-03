@@ -46,9 +46,9 @@ your `config.toml` overrides.
 | `Alt+l` | `focus-right` | Move focus to the pane on the right |
 | `Alt+k` | `focus-up` | Move focus up |
 | `Alt+j` | `focus-down` | Move focus down (to the terminal) |
-| `Tab` | `cycle-tab` | Cycle the right-hand tab (Graph → Diff → Search → Editor) |
-| `Ctrl+Tab` | `cycle-tab-fwd` | Next right-hand tab |
-| `Ctrl+Shift+Tab` | `cycle-tab-back` | Previous right-hand tab |
+| `Tab` | `cycle-tab-fwd` | Next right-hand tab (only while the right pane is focused; passes through to the terminal) |
+| `Shift+Tab` | `cycle-tab-back` | Previous right-hand tab (only while the right pane is focused) |
+| `Ctrl+Tab` | `cycle-tab` | Cycle the right-hand tab (Graph → Diff → Search → Editor) |
 | `` Ctrl+` `` | `toggle-shell` | Toggle the bottom terminal |
 | `Ctrl+Shift+f` | `open-search` | Open the Search tab (repository-wide search & replace) |
 | `Ctrl+o` | `nav-back` | Go back in navigation history (also mouse back button) |
