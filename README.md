@@ -12,7 +12,7 @@ A lightweight Git GUI client for Linux, inspired by VS Code's *Git Graph* extens
 - **Neovim integration** 
 - **Embedded terminal / Neovim**
 - **Live worktree watching** 
-- **Vim-style keyboard navigation** (rebindable; press `?` for a live cheat-sheet)
+- **Vim-style keyboard navigation**
 
 ## Build & run
 
@@ -31,10 +31,7 @@ twig <repo path>
 
 ## Keybindings
 
-Press `?` in any pane (outside a text field or the terminal) to pop up a
-cheat-sheet of the bindings currently in effect — the global ones plus those of
-the focused pane. It reads straight from the live keymap, so it always reflects
-your `config.toml` overrides.
+Press `?` in any pane (outside a text field or the terminal) to pop up a cheat-sheet of the bindings currently in effect.
 
 ### Defaults
 
@@ -78,8 +75,7 @@ your `config.toml` overrides.
 | `B` | `graph-rebase-onto` | Rebase the current branch onto the commit |
 | `p` | `graph-push` | Push the current branch |
 | `f` | `graph-fetch` | Fetch from the remote |
-
-`graph-pull` is also available as an action (for `pull`) but is unbound by default — assign it a key in `config.toml` if you want it. Commands that rewrite history or touch the remote (reset, rebase, cherry-pick, revert, checkout, push, fetch) ask for confirmation first.
+| -   | `graph-pull`  | Pull from the remote |
 
 **Diff** (right pane, Diff tab)
 
@@ -139,8 +135,6 @@ Inside the Diff find bar (`/`) and the Search tab, the input fields use fixed ke
 | `Enter` | Go to the next match (Diff bar) / run the search (Search tab) |
 | `Shift+Enter` | Go to the previous match (Diff bar) |
 | `Esc` | Unfocus the input; press `/` again to close the Diff bar |
-
-Both bars offer `Aa` (match case) and `.*` (regex, with `$1` capture references in the replacement) toggles. Replacements are written to the working tree — the Search tab confirms before applying.
 
 ### Rebinding
 
