@@ -331,6 +331,18 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                                 if ui.button(label).clicked() {
                                     app.apply_line_selection();
                                 }
+                                if !staged
+                                    && ui
+                                        .add(
+                                            egui::Button::new(format!(
+                                                "\u{f0e2}  Discard lines ({n})"
+                                            ))
+                                            .fill(egui::Color32::from_rgb(0x8b, 0x2e, 0x2e)),
+                                        )
+                                        .clicked()
+                                {
+                                    app.request_discard_selection();
+                                }
                                 if ui.button("Clear").clicked() {
                                     app.diff_anchor = None;
                                 }
@@ -452,7 +464,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
             ui.heading("Discard changes");
             ui.add_space(6.0);
             ui.label(format!(
-                "Discard changes to {path} and restore it to HEAD. Are you sure?"
+                "Discard unstaged changes to {path}. Staged changes are kept. Are you sure?"
             ));
             ui.add_space(10.0);
             ui.horizontal(|ui| {
@@ -473,6 +485,37 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
             app.confirm_discard = None;
         } else if cancel || resp.should_close() {
             app.confirm_discard = None;
+        }
+    }
+
+    if let Some((path, lo, hi)) = app.confirm_discard_range.clone() {
+        let n = hi.saturating_sub(lo) + 1;
+        let resp = egui::Modal::new(egui::Id::new("confirm_discard_range")).show(ui.ctx(), |ui| {
+            ui.set_width(340.0);
+            ui.heading("Discard lines");
+            ui.add_space(6.0);
+            ui.label(format!(
+                "Discard the selected {n} line(s) from the working tree in {path}. Are you sure?"
+            ));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let cancel = ui.button("Cancel").clicked();
+                let discard = ui
+                    .add(
+                        egui::Button::new("Discard")
+                            .fill(egui::Color32::from_rgb(0x8b, 0x2e, 0x2e)),
+                    )
+                    .clicked();
+                (discard, cancel)
+            })
+            .inner
+        });
+        let (discard, cancel) = resp.inner;
+        if discard {
+            app.discard_line_selection(&path, lo, hi);
+            app.confirm_discard_range = None;
+        } else if cancel || resp.should_close() {
+            app.confirm_discard_range = None;
         }
     }
 
@@ -1356,6 +1399,7 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
         || app.active_tab != Tab::Diff
         || app.selected_file.is_none()
         || app.confirm_discard.is_some()
+        || app.confirm_discard_range.is_some()
         || ui.ctx().memory(|m| m.focused().is_some())
     {
         return;
@@ -1384,6 +1428,11 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
             Action::DiffUnstageSelection => {
                 if staged && !conflict {
                     app.apply_line_selection();
+                }
+            }
+            Action::DiffDiscardSelection => {
+                if !staged && !conflict {
+                    app.request_discard_selection();
                 }
             }
             Action::DiffHalfPageDown => app.scroll_diff(0.5, true),

@@ -614,3 +614,18 @@ pub fn apply_partial(
     let mut opts = ApplyOptions::new();
     repo.apply(&diff, ApplyLocation::Index, Some(&mut opts))
 }
+
+pub fn discard_partial(
+    repo_path: &Path,
+    file: &str,
+    rows: &[DiffRow],
+    lo: usize,
+    hi: usize,
+) -> Result<(), git2::Error> {
+    let patch = build_partial_patch(file, rows, lo, hi, true)
+        .ok_or_else(|| git2::Error::from_str("no lines selected"))?;
+    let repo = Repository::open(repo_path)?;
+    let diff = Diff::from_buffer(patch.as_bytes())?;
+    let mut opts = ApplyOptions::new();
+    repo.apply(&diff, ApplyLocation::WorkDir, Some(&mut opts))
+}

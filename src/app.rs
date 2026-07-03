@@ -316,6 +316,7 @@ pub struct App {
     pub keymap: Keymap,
     pub pending_prefix: Option<Chord>,
     pub confirm_discard: Option<String>,
+    pub confirm_discard_range: Option<(String, usize, usize)>,
 
     pub seq: Option<SeqStatus>,
     pub stashes: Vec<repo::StashEntry>,
@@ -406,6 +407,7 @@ impl App {
             keymap,
             pending_prefix: None,
             confirm_discard: None,
+            confirm_discard_range: None,
             seq: None,
             stashes: Vec::new(),
             ref_prompt: None,
@@ -959,6 +961,34 @@ impl App {
         self.after_index_change();
     }
 
+    pub fn request_discard_selection(&mut self) {
+        if self.diff.rename || self.diff.conflict {
+            return;
+        }
+        let Some((path, staged)) = self.selected_file.clone() else {
+            return;
+        };
+        if staged {
+            return;
+        }
+        let Some((lo, hi)) = self.diff_action_range() else {
+            return;
+        };
+        if self.config.confirm_discard {
+            self.confirm_discard_range = Some((path, lo, hi));
+        } else {
+            self.discard_line_selection(&path, lo, hi);
+        }
+    }
+
+    pub fn discard_line_selection(&mut self, path: &str, lo: usize, hi: usize) {
+        if let Err(e) = repo::discard_partial(&self.selected, path, &self.diff.rows, lo, hi) {
+            self.error = Some(format!("partial discard failed: {e}"));
+        }
+        self.diff_anchor = None;
+        self.after_index_change();
+    }
+
     pub fn select_file(&mut self, file: String, staged: bool) {
         self.reset_diff_nav();
         self.load_file_diff(file, staged);
@@ -1349,6 +1379,7 @@ impl App {
     pub fn any_modal_open(&self) -> bool {
         self.settings_open
             || self.confirm_discard.is_some()
+            || self.confirm_discard_range.is_some()
             || self.ref_prompt.is_some()
             || self.confirm_delete.is_some()
             || self.reset_prompt.is_some()

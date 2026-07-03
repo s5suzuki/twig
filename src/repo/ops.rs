@@ -77,41 +77,12 @@ pub fn discard(repo_path: &Path, paths: &[String]) -> Result<(), git2::Error> {
     }
     let repo = Repository::open(repo_path)?;
 
-    let head = match repo.head() {
-        Ok(h) => h,
-        Err(_) => return discard_unborn(&repo, paths),
-    };
-
-    let obj = head.peel(git2::ObjectType::Commit)?;
-    repo.reset_default(Some(&obj), paths.iter().map(String::as_str))?;
-
     let mut cb = git2::build::CheckoutBuilder::new();
     cb.force().remove_untracked(true);
     for p in paths {
         cb.path(p);
     }
-    repo.checkout_head(Some(&mut cb))
-}
-
-fn discard_unborn(repo: &Repository, paths: &[String]) -> Result<(), git2::Error> {
-    let workdir = repo
-        .workdir()
-        .ok_or_else(|| git2::Error::from_str("no workdir (bare repository)"))?
-        .to_path_buf();
-    let mut index = repo.index()?;
-    for p in paths {
-        index.remove_all([p].iter(), None)?;
-    }
-    index.write()?;
-    for p in paths {
-        let abs = workdir.join(p);
-        if abs.is_dir() {
-            let _ = std::fs::remove_dir_all(&abs);
-        } else if abs.exists() {
-            let _ = std::fs::remove_file(&abs);
-        }
-    }
-    Ok(())
+    repo.checkout_index(None, Some(&mut cb))
 }
 
 pub fn checkout_branch(repo_path: &Path, branch: &str) -> Result<(), git2::Error> {

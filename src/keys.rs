@@ -61,6 +61,7 @@ pub enum Action {
     DiffClearVisual,
     DiffStageSelection,
     DiffUnstageSelection,
+    DiffDiscardSelection,
     DiffHalfPageDown,
     DiffHalfPageUp,
     DiffPageDown,
@@ -136,6 +137,7 @@ impl Action {
         (Action::DiffClearVisual, "diff-clear-visual", "Clear the selection"),
         (Action::DiffStageSelection, "diff-stage-selection", "Stage the selected lines"),
         (Action::DiffUnstageSelection, "diff-unstage-selection", "Unstage the selected lines"),
+        (Action::DiffDiscardSelection, "diff-discard-selection", "Discard the selected lines from the working tree"),
         (Action::DiffHalfPageDown, "diff-half-page-down", "Scroll half a page down"),
         (Action::DiffHalfPageUp, "diff-half-page-up", "Scroll half a page up"),
         (Action::DiffPageDown, "diff-page-down", "Scroll one page down"),
@@ -386,6 +388,7 @@ impl Keymap {
         km.push(Diff, n, Escape, DiffClearVisual);
         km.push(Diff, n, S, DiffStageSelection);
         km.push(Diff, n, U, DiffUnstageSelection);
+        km.push(Diff, n, D, DiffDiscardSelection);
         km.push(Diff, ctrl, D, DiffHalfPageDown);
         km.push(Diff, ctrl, U, DiffHalfPageUp);
         km.push(Diff, ctrl, F, DiffPageDown);
