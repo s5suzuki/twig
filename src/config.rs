@@ -117,6 +117,7 @@ pub struct Config {
     pub graph_files_tree: bool,
     pub mono_font: String,
     pub show_title_bar: bool,
+    pub show_files: bool,
     #[serde(alias = "confirm_delete")]
     pub confirm_discard: bool,
     #[serde(default)]
@@ -135,6 +136,7 @@ impl Default for Config {
             graph_files_tree: true,
             mono_font: "hackgen-console-nf".to_string(),
             show_title_bar: true,
+            show_files: false,
             confirm_discard: true,
             keys: BTreeMap::new(),
         }

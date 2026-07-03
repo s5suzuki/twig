@@ -42,7 +42,19 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
         .default_size(200.0)
         .resizable(true)
         .show(ui, |ui| {
-            ui.add(egui::Label::new(egui::RichText::new("Repositories").heading()).truncate());
+            ui.horizontal(|ui| {
+                ui.add(egui::Label::new(egui::RichText::new("Repositories").heading()).truncate());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .selectable_label(app.config.show_files, "\u{f0f6}")
+                        .on_hover_text("Show repository files")
+                        .clicked()
+                    {
+                        app.config.show_files = !app.config.show_files;
+                        app.config.save();
+                    }
+                });
+            });
             ui.separator();
             sidebar::draw_tree(app, ui);
             focus_on_click(app, ui, Pane::Sidebar);
@@ -1154,6 +1166,15 @@ fn draw_settings(app: &mut App, ctx: &egui::Context) {
                 .checkbox(
                     &mut app.config.confirm_discard,
                     "Confirm before discarding changes",
+                )
+                .changed()
+            {
+                save = true;
+            }
+            if ui
+                .checkbox(
+                    &mut app.config.show_files,
+                    "Show repository files in sidebar",
                 )
                 .changed()
             {

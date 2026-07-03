@@ -1,5 +1,6 @@
 mod diff;
 mod discovery;
+mod files;
 mod graph;
 mod ops;
 mod status;
@@ -9,6 +10,7 @@ pub use diff::{
     commit_file_diff, commit_file_rows, commit_files, commit_message, discard_partial, file_diff,
 };
 pub use discovery::{RepoNode, discover, refresh_badges};
+pub use files::{FileNode, list_files};
 pub use graph::{Graph, GraphRow, RefKind, RefLabel, Segment, build as build_graph};
 pub use ops::{
     ResetMode, SeqOutcome, SeqState, StashEntry, amend, checkout_branch, checkout_commit,

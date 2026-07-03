@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -321,6 +321,8 @@ pub struct App {
     pub changes_cursor: usize,
     pub changes_scroll_pending: bool,
     pub sidebar_cursor: usize,
+    pub sidebar_scroll_pending: bool,
+    pub file_cache: HashMap<PathBuf, Vec<repo::FileNode>>,
     pub graph_cursor: usize,
     pub graph_scroll_pending: bool,
     pub graph_menu: Option<GraphMenu>,
@@ -413,6 +415,8 @@ impl App {
             changes_cursor: 0,
             changes_scroll_pending: false,
             sidebar_cursor: 0,
+            sidebar_scroll_pending: false,
+            file_cache: HashMap::new(),
             graph_cursor: 0,
             graph_scroll_pending: false,
             graph_menu: None,
@@ -518,6 +522,7 @@ impl App {
         if let Some(w) = self.watcher.as_mut() {
             w.rescan_new_toplevel(&self.watch_root);
         }
+        self.file_cache.clear();
         self.after_index_change();
     }
 
@@ -1404,6 +1409,10 @@ impl App {
 
     pub fn open_in_editor(&mut self, file: &str) {
         let abs = self.selected.join(file);
+        self.open_abs_in_editor(abs);
+    }
+
+    pub fn open_abs_in_editor(&mut self, abs: PathBuf) {
         self.active_tab = Tab::Editor;
         self.focus = Pane::RightTab;
         if self.term.is_some() && self.nvim_socket.exists() {
