@@ -9,7 +9,7 @@ use git2::Oid;
 
 use crate::config::Config;
 use crate::keys::{Chord, Keymap};
-use crate::repo::{self, DiffMode, DiffRow, FileDiff, Graph, RepoNode, StatusEntry};
+use crate::repo::{self, DiffMode, DiffRow, FileDiff, Graph, LineKind, RepoNode, StatusEntry};
 use crate::search;
 
 pub const LIST_PAGE: usize = 10;
@@ -302,6 +302,7 @@ pub struct App {
     pub diff_cursor: usize,
     pub diff_anchor: Option<usize>,
     pub diff_scroll_pending: bool,
+    pub diff_scroll_center: bool,
     pub diff_scrolled_prev: bool,
     pub diff_visible: Option<(usize, usize)>,
     pub commit_msg: String,
@@ -400,6 +401,7 @@ impl App {
             diff_cursor: 0,
             diff_anchor: None,
             diff_scroll_pending: false,
+            diff_scroll_center: false,
             diff_scrolled_prev: false,
             diff_visible: None,
             commit_msg: String::new(),
@@ -946,6 +948,58 @@ impl App {
         self.diff_scroll_pending = true;
     }
 
+    fn hunk_starts(&self) -> Vec<usize> {
+        let rows = &self.diff.rows;
+        let has_header = rows.iter().any(|r| matches!(r, DiffRow::Hunk { .. }));
+        let mut starts = Vec::new();
+        let is_change = |k: &LineKind| *k != LineKind::Context;
+        if has_header {
+            let mut awaiting = false;
+            for (i, r) in rows.iter().enumerate() {
+                match r {
+                    DiffRow::Hunk { .. } => awaiting = true,
+                    DiffRow::Line { kind, .. } if awaiting && is_change(kind) => {
+                        starts.push(i);
+                        awaiting = false;
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            let mut in_run = false;
+            for (i, r) in rows.iter().enumerate() {
+                match r {
+                    DiffRow::Line { kind, .. } if is_change(kind) => {
+                        if !in_run {
+                            starts.push(i);
+                            in_run = true;
+                        }
+                    }
+                    _ => in_run = false,
+                }
+            }
+        }
+        starts
+    }
+
+    pub fn jump_hunk(&mut self, forward: bool) {
+        let starts = self.hunk_starts();
+        if starts.is_empty() {
+            return;
+        }
+        let cur = self.diff_cursor.min(self.diff_last_row());
+        let target = if forward {
+            starts.iter().copied().find(|&s| s > cur)
+        } else {
+            starts.iter().rev().copied().find(|&s| s < cur)
+        };
+        if let Some(t) = target {
+            self.diff_cursor = t;
+            self.diff_scroll_pending = true;
+            self.diff_scroll_center = true;
+        }
+    }
+
     pub fn toggle_diff_visual(&mut self) {
         self.diff_anchor = if self.diff_anchor.is_some() {
             None
@@ -1027,9 +1081,17 @@ impl App {
     pub fn select_file(&mut self, file: String, staged: bool) {
         self.reset_diff_nav();
         self.load_file_diff(file, staged);
-        self.diff_scroll_pending = true;
+        self.cursor_to_first_hunk();
         self.active_tab = Tab::Diff;
         self.focus = Pane::RightTab;
+    }
+
+    fn cursor_to_first_hunk(&mut self) {
+        if let Some(&first) = self.hunk_starts().first() {
+            self.diff_cursor = first;
+            self.diff_scroll_center = true;
+        }
+        self.diff_scroll_pending = true;
     }
 
     pub fn select_commit(&mut self, oid: Oid) {

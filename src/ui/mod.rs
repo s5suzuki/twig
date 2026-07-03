@@ -415,6 +415,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         cursor: app.diff_cursor.min(app.diff_last_row()),
                         sel: app.diff_highlight(),
                         scroll_to_cursor: app.diff_scroll_pending,
+                        center: app.diff_scroll_center,
                     });
                     app.ensure_diff_highlight(ui.visuals().dark_mode);
                     let diff_ver = app.diff_version();
@@ -430,6 +431,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                     );
                     app.diff_scrolled_prev = app.diff_scroll_pending;
                     app.diff_scroll_pending = false;
+                    app.diff_scroll_center = false;
                     if nav.is_some() {
                         app.diff_visible = resp.visible;
                     }
@@ -1472,6 +1474,8 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
             Action::DiffUp => app.move_diff_cursor(-1),
             Action::DiffTop => app.set_diff_cursor(0),
             Action::DiffBottom => app.set_diff_cursor(last),
+            Action::DiffNextHunk => app.jump_hunk(true),
+            Action::DiffPrevHunk => app.jump_hunk(false),
             Action::DiffToggleVisual => app.toggle_diff_visual(),
             Action::DiffClearVisual => app.diff_anchor = None,
             Action::DiffStageSelection => {

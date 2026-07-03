@@ -64,6 +64,7 @@ pub struct DiffNav {
     pub cursor: usize,
     pub sel: Option<(usize, usize)>,
     pub scroll_to_cursor: bool,
+    pub center: bool,
 }
 
 #[derive(Default)]
@@ -315,9 +316,10 @@ fn render_rows(
                             cursor_bar,
                         );
                         if nav.scroll_to_cursor {
+                            let align = if nav.center { Some(Align::Center) } else { None };
                             ui.scroll_to_rect_animation(
                                 rrect,
-                                None,
+                                align,
                                 egui::style::ScrollAnimation::none(),
                             );
                         }

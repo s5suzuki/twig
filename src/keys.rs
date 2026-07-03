@@ -57,6 +57,8 @@ pub enum Action {
     DiffUp,
     DiffTop,
     DiffBottom,
+    DiffNextHunk,
+    DiffPrevHunk,
     DiffToggleVisual,
     DiffClearVisual,
     DiffStageSelection,
@@ -161,6 +163,16 @@ impl Action {
         (Action::DiffUp, "diff-up", "Move cursor up one line"),
         (Action::DiffTop, "diff-top", "Jump to the first line"),
         (Action::DiffBottom, "diff-bottom", "Jump to the last line"),
+        (
+            Action::DiffNextHunk,
+            "diff-next-hunk",
+            "Jump to the next hunk",
+        ),
+        (
+            Action::DiffPrevHunk,
+            "diff-prev-hunk",
+            "Jump to the previous hunk",
+        ),
         (
             Action::DiffToggleVisual,
             "diff-toggle-visual",
@@ -562,6 +574,18 @@ impl Keymap {
         km.push(Diff, n, K, DiffUp);
         km.push_seq(Diff, Chord::new(n, G), Chord::new(n, G), DiffTop);
         km.push(Diff, shift, G, DiffBottom);
+        km.push_seq(
+            Diff,
+            Chord::new(n, CloseBracket),
+            Chord::new(n, C),
+            DiffNextHunk,
+        );
+        km.push_seq(
+            Diff,
+            Chord::new(n, OpenBracket),
+            Chord::new(n, C),
+            DiffPrevHunk,
+        );
         km.push(Diff, n, V, DiffToggleVisual);
         km.push(Diff, n, Escape, DiffClearVisual);
         km.push(Diff, n, S, DiffStageSelection);
@@ -868,6 +892,50 @@ mod tests {
         );
         assert_eq!(out, vec![Action::ChangesTop]);
         assert!(pending.is_none());
+    }
+
+    #[test]
+    fn bracket_c_sequence_jumps_hunks() {
+        let km = Keymap::default();
+        let ctx = egui::Context::default();
+        let mut pending = None;
+
+        let out = poll_events(
+            &km,
+            &ctx,
+            Context::Diff,
+            &mut pending,
+            vec![key_event(Key::CloseBracket, Modifiers::NONE)],
+        );
+        assert!(out.is_empty());
+        assert!(pending.is_some());
+
+        let out = poll_events(
+            &km,
+            &ctx,
+            Context::Diff,
+            &mut pending,
+            vec![key_event(Key::C, Modifiers::NONE)],
+        );
+        assert_eq!(out, vec![Action::DiffNextHunk]);
+        assert!(pending.is_none());
+
+        let out = poll_events(
+            &km,
+            &ctx,
+            Context::Diff,
+            &mut pending,
+            vec![key_event(Key::OpenBracket, Modifiers::NONE)],
+        );
+        assert!(out.is_empty());
+        let out = poll_events(
+            &km,
+            &ctx,
+            Context::Diff,
+            &mut pending,
+            vec![key_event(Key::C, Modifiers::NONE)],
+        );
+        assert_eq!(out, vec![Action::DiffPrevHunk]);
     }
 
     #[test]
