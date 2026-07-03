@@ -5,7 +5,7 @@ mod sidebar;
 
 use std::collections::BTreeMap;
 
-use crate::app::{App, Dir, Pane, Tab};
+use crate::app::{App, DiscardReq, Dir, Pane, Tab};
 use crate::repo::{StatusEntry, StatusKind};
 
 const BTN_W: f32 = 22.0;
@@ -17,7 +17,7 @@ enum Action {
     Stage(Vec<String>),
     Unstage(Vec<String>),
     OpenEditor(String),
-    RequestDiscard(String),
+    RequestDiscard(DiscardReq),
 }
 
 pub fn draw(app: &mut App, ui: &mut egui::Ui) {
@@ -142,11 +142,11 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                     Action::Stage(paths) => app.stage(paths),
                     Action::Unstage(paths) => app.unstage(paths),
                     Action::OpenEditor(p) => app.open_in_editor(&p),
-                    Action::RequestDiscard(p) => {
+                    Action::RequestDiscard(req) => {
                         if app.config.confirm_discard {
-                            app.confirm_discard = Some(p);
+                            app.confirm_discard = Some(req);
                         } else {
-                            app.discard_changes(&p);
+                            app.discard_paths(&req.paths);
                         }
                     }
                 }
@@ -482,13 +482,14 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
         .rect;
     pane_border(ui, central_rect, app.focus == Pane::RightTab);
 
-    if let Some(path) = app.confirm_discard.clone() {
+    if let Some(req) = app.confirm_discard.clone() {
         let resp = egui::Modal::new(egui::Id::new("confirm_discard")).show(ui.ctx(), |ui| {
             ui.set_width(340.0);
             ui.heading("Discard changes");
             ui.add_space(6.0);
             ui.label(format!(
-                "Discard unstaged changes to {path}. Staged changes are kept. Are you sure?"
+                "Discard unstaged changes to {}. Staged changes are kept. Are you sure?",
+                req.label
             ));
             ui.add_space(10.0);
             ui.horizontal(|ui| {
@@ -505,7 +506,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
         });
         let (discard, cancel) = resp.inner;
         if discard {
-            app.discard_changes(&path);
+            app.discard_paths(&req.paths);
             app.confirm_discard = None;
         } else if cancel || resp.should_close() {
             app.confirm_discard = None;
@@ -1669,6 +1670,11 @@ enum NavKind {
 fn dir_id(salt: &str) -> egui::Id {
     egui::Id::new(("nav_dir", salt))
 }
+fn dir_label(salt: &str) -> String {
+    salt.split_once('/')
+        .map(|(_, rest)| rest.to_string())
+        .unwrap_or_else(|| salt.to_string())
+}
 fn dir_open(ctx: &egui::Context, salt: &str) -> bool {
     ctx.data(|d| d.get_temp::<bool>(dir_id(salt)).unwrap_or(true))
 }
@@ -1901,10 +1907,28 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
         app.focus = Pane::RightTab;
         action = Some(Action::OpenEditor(path.clone()));
     }
-    if d && !cur.staged
-        && let NavKind::File { path, .. } = &cur.kind
-    {
-        action = Some(Action::RequestDiscard(path.clone()));
+    if d && !cur.staged {
+        match &cur.kind {
+            NavKind::File { path, old_path, .. } => {
+                action = Some(Action::RequestDiscard(DiscardReq {
+                    paths: file_paths(path, old_path.as_deref()),
+                    label: path.clone(),
+                }));
+            }
+            NavKind::Dir { salt, paths, .. } => {
+                action = Some(Action::RequestDiscard(DiscardReq {
+                    paths: paths.clone(),
+                    label: dir_label(salt),
+                }));
+            }
+            NavKind::Group { paths, .. } if !paths.is_empty() => {
+                action = Some(Action::RequestDiscard(DiscardReq {
+                    paths: paths.clone(),
+                    label: "all files".to_string(),
+                }));
+            }
+            NavKind::Group { .. } => {}
+        }
     }
     if app.changes_cursor != before {
         app.changes_scroll_pending = true;
@@ -2002,12 +2026,29 @@ fn render_group_row(
         text_color,
     );
 
+    let mut btn_clicked = false;
+    if !staged && !paths.is_empty() {
+        let del_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 2.0 * BTN_W - 2.0, rect.center().y - 9.0),
+            egui::vec2(BTN_W, 18.0),
+        );
+        if ui
+            .put(del_rect, egui::Button::new("\u{f0e2}"))
+            .on_hover_text("Discard all changes")
+            .clicked()
+        {
+            btn_clicked = true;
+            *action = Some(Action::RequestDiscard(DiscardReq {
+                paths: paths.to_vec(),
+                label: "all files".to_string(),
+            }));
+        }
+    }
     let btn = if staged { "−" } else { "+" };
     let btn_rect = egui::Rect::from_min_size(
         egui::pos2(rect.right() - BTN_W - 2.0, rect.center().y - 9.0),
         egui::vec2(BTN_W, 18.0),
     );
-    let mut btn_clicked = false;
     if ui.put(btn_rect, egui::Button::new(btn)).clicked() {
         btn_clicked = true;
         *action = Some(if staged {
@@ -2072,6 +2113,23 @@ fn render_dir_row(
 
     let mut btn_clicked = false;
     if hovered {
+        if !staged {
+            let del_rect = egui::Rect::from_min_size(
+                egui::pos2(rect.right() - MARKER_W - 2.0 * BTN_W, rect.center().y - 9.0),
+                egui::vec2(BTN_W, 18.0),
+            );
+            if ui
+                .put(del_rect, egui::Button::new("\u{f0e2}"))
+                .on_hover_text("Discard changes in folder")
+                .clicked()
+            {
+                btn_clicked = true;
+                *action = Some(Action::RequestDiscard(DiscardReq {
+                    paths: paths.to_vec(),
+                    label: dir_label(salt),
+                }));
+            }
+        }
         let btn = if staged { "−" } else { "+" };
         let btn_rect = egui::Rect::from_min_size(
             egui::pos2(rect.right() - MARKER_W - BTN_W, rect.center().y - 9.0),
@@ -2163,7 +2221,10 @@ fn render_file_row(
                 .clicked()
             {
                 btn_clicked = true;
-                *action = Some(Action::RequestDiscard(path.to_string()));
+                *action = Some(Action::RequestDiscard(DiscardReq {
+                    paths: file_paths(path, old_path),
+                    label: path.to_string(),
+                }));
             }
         }
         let btn = if staged { "−" } else { "+" };

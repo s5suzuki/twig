@@ -243,7 +243,7 @@ impl Action {
         (
             Action::ChangesDiscard,
             "changes-discard",
-            "Discard changes to the file",
+            "Discard changes to the file or folder",
         ),
         (
             Action::ChangesHalfPageDown,

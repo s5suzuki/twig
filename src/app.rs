@@ -204,6 +204,12 @@ pub enum DeleteTarget {
 }
 
 #[derive(Clone)]
+pub struct DiscardReq {
+    pub paths: Vec<String>,
+    pub label: String,
+}
+
+#[derive(Clone)]
 pub enum GraphItem {
     Commit(usize),
     File(usize),
@@ -328,7 +334,7 @@ pub struct App {
     pub graph_menu: Option<GraphMenu>,
     pub keymap: Keymap,
     pub pending_prefix: Option<Chord>,
-    pub confirm_discard: Option<String>,
+    pub confirm_discard: Option<DiscardReq>,
     pub confirm_discard_range: Option<(String, usize, usize)>,
 
     pub seq: Option<SeqStatus>,
@@ -1554,21 +1560,11 @@ impl App {
         self.focus = Pane::Terminal;
     }
 
-    pub fn discard_changes(&mut self, path: &str) {
-        let paths = self.entry_paths(path);
-        if let Err(e) = repo::discard(&self.selected, &paths) {
+    pub fn discard_paths(&mut self, paths: &[String]) {
+        if let Err(e) = repo::discard(&self.selected, paths) {
             self.error = Some(format!("Failed to discard changes: {e}"));
         }
         self.after_index_change();
-    }
-
-    fn entry_paths(&self, path: &str) -> Vec<String> {
-        self.staged
-            .iter()
-            .chain(self.unstaged.iter())
-            .find(|e| e.path == path)
-            .map(|e| e.paths())
-            .unwrap_or_else(|| vec![path.to_string()])
     }
 
     pub fn stage(&mut self, paths: Vec<String>) {

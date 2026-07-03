@@ -36,15 +36,6 @@ pub struct StatusEntry {
     pub kind: StatusKind,
 }
 
-impl StatusEntry {
-    pub fn paths(&self) -> Vec<String> {
-        match &self.old_path {
-            Some(old) if old != &self.path => vec![old.clone(), self.path.clone()],
-            _ => vec![self.path.clone()],
-        }
-    }
-}
-
 pub fn load_status(path: &Path) -> Result<(Vec<StatusEntry>, Vec<StatusEntry>), git2::Error> {
     let repo = Repository::open(path)?;
     collect_status(&repo)
