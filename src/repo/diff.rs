@@ -52,6 +52,87 @@ pub struct CommitFile {
     pub kind: StatusKind,
 }
 
+pub enum CommitRowKind {
+    Folder { name: String, path: String, open: bool },
+    File(usize),
+}
+
+pub struct CommitFileRow {
+    pub depth: usize,
+    pub kind: CommitRowKind,
+}
+
+pub fn commit_file_rows(
+    files: &[CommitFile],
+    tree: bool,
+    folded: &std::collections::HashSet<String>,
+) -> Vec<CommitFileRow> {
+    if !tree {
+        return files
+            .iter()
+            .enumerate()
+            .map(|(i, _)| CommitFileRow {
+                depth: 0,
+                kind: CommitRowKind::File(i),
+            })
+            .collect();
+    }
+
+    #[derive(Default)]
+    struct Node {
+        dirs: std::collections::BTreeMap<String, Node>,
+        files: Vec<(String, usize)>,
+    }
+    let mut root = Node::default();
+    for (i, f) in files.iter().enumerate() {
+        let parts: Vec<&str> = f.path.split('/').collect();
+        let (dirs, name) = parts.split_at(parts.len() - 1);
+        let mut cur = &mut root;
+        for d in dirs {
+            cur = cur.dirs.entry((*d).to_string()).or_default();
+        }
+        cur.files.push((name[0].to_string(), i));
+    }
+
+    fn walk(
+        node: &mut Node,
+        depth: usize,
+        prefix: &str,
+        folded: &std::collections::HashSet<String>,
+        out: &mut Vec<CommitFileRow>,
+    ) {
+        for (name, sub) in &mut node.dirs {
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let open = !folded.contains(&path);
+            out.push(CommitFileRow {
+                depth,
+                kind: CommitRowKind::Folder {
+                    name: name.clone(),
+                    path: path.clone(),
+                    open,
+                },
+            });
+            if open {
+                walk(sub, depth + 1, &path, folded, out);
+            }
+        }
+        node.files.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, idx) in &node.files {
+            out.push(CommitFileRow {
+                depth,
+                kind: CommitRowKind::File(*idx),
+            });
+        }
+    }
+    let mut out = Vec::new();
+    walk(&mut root, 0, "", folded, &mut out);
+    out
+}
+
 fn make_diff<'a>(
     repo: &'a Repository,
     mode: DiffMode,
@@ -642,4 +723,85 @@ pub fn discard_partial(
     let diff = Diff::from_buffer(patch.as_bytes())?;
     let mut opts = ApplyOptions::new();
     repo.apply(&diff, ApplyLocation::WorkDir, Some(&mut opts))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cf(path: &str) -> CommitFile {
+        CommitFile {
+            path: path.to_string(),
+            kind: StatusKind::Modified,
+        }
+    }
+
+    fn render(files: &[CommitFile], tree: bool, folded: &[&str]) -> Vec<String> {
+        let folded: std::collections::HashSet<String> =
+            folded.iter().map(|s| s.to_string()).collect();
+        commit_file_rows(files, tree, &folded)
+            .into_iter()
+            .map(|r| match r.kind {
+                CommitRowKind::Folder { name, open, .. } => {
+                    format!("{}[{}{}]", "  ".repeat(r.depth), if open { "" } else { "+" }, name)
+                }
+                CommitRowKind::File(i) => format!("{}{}", "  ".repeat(r.depth), files[i].path),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn list_mode_keeps_order() {
+        let files = vec![cf("b.rs"), cf("a/x.rs"), cf("a.rs")];
+        assert_eq!(render(&files, false, &[]), vec!["b.rs", "a/x.rs", "a.rs"]);
+    }
+
+    #[test]
+    fn tree_mode_groups_dirs_then_files() {
+        let files = vec![
+            cf("src/app.rs"),
+            cf("src/ui/mod.rs"),
+            cf("README.md"),
+            cf("src/ui/graph.rs"),
+        ];
+        assert_eq!(
+            render(&files, true, &[]),
+            vec![
+                "[src]",
+                "  [ui]",
+                "    src/ui/graph.rs",
+                "    src/ui/mod.rs",
+                "  src/app.rs",
+                "README.md",
+            ]
+        );
+    }
+
+    #[test]
+    fn folded_dir_hides_children() {
+        let files = vec![
+            cf("src/app.rs"),
+            cf("src/ui/mod.rs"),
+            cf("src/ui/graph.rs"),
+        ];
+        assert_eq!(
+            render(&files, true, &["src/ui"]),
+            vec!["[src]", "  [+ui]", "  src/app.rs"]
+        );
+    }
+
+    #[test]
+    fn tree_mode_file_indices_cover_all() {
+        let files = vec![cf("z.rs"), cf("d/a.rs"), cf("d/b.rs")];
+        let folded = std::collections::HashSet::new();
+        let mut idx: Vec<usize> = commit_file_rows(&files, true, &folded)
+            .into_iter()
+            .filter_map(|r| match r.kind {
+                CommitRowKind::File(i) => Some(i),
+                _ => None,
+            })
+            .collect();
+        idx.sort();
+        assert_eq!(idx, vec![0, 1, 2]);
+    }
 }

@@ -203,10 +203,11 @@ pub enum DeleteTarget {
     RemoteBranch(String),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum GraphItem {
     Commit(usize),
     File(usize),
+    Folder(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -285,6 +286,7 @@ pub struct App {
     pub commit_files: Vec<repo::CommitFile>,
     pub commit_detail: String,
     pub selected_commit_file: Option<String>,
+    pub commit_folds: HashSet<String>,
     pub diff: FileDiff,
     pub diff_hl: crate::highlight::DiffHighlight,
     pub diff_galleys: crate::ui::diff_view::DiffGalleyCache,
@@ -380,6 +382,7 @@ impl App {
             commit_files: Vec::new(),
             commit_detail: String::new(),
             selected_commit_file: None,
+            commit_folds: HashSet::new(),
             diff: empty_diff(),
             diff_hl: crate::highlight::DiffHighlight::default(),
             diff_galleys: crate::ui::diff_view::DiffGalleyCache::default(),
@@ -1115,8 +1118,17 @@ impl App {
         for (i, row) in self.graph.rows.iter().enumerate() {
             out.push(GraphItem::Commit(i));
             if Some(row.id) == sel {
-                for k in 0..self.commit_files.len() {
-                    out.push(GraphItem::File(k));
+                for r in repo::commit_file_rows(
+                    &self.commit_files,
+                    self.config.graph_files_tree,
+                    &self.commit_folds,
+                ) {
+                    match r.kind {
+                        repo::CommitRowKind::File(k) => out.push(GraphItem::File(k)),
+                        repo::CommitRowKind::Folder { path, .. } => {
+                            out.push(GraphItem::Folder(path))
+                        }
+                    }
                 }
             }
         }
@@ -1181,10 +1193,12 @@ impl App {
         let idx = self.graph_cursor.min(items.len().checked_sub(1)?);
         let oid = match items.get(idx)? {
             GraphItem::Commit(r) => Some(self.graph.rows[*r].id),
-            GraphItem::File(_) => match items[self.parent_commit_item(&items, idx)?] {
-                GraphItem::Commit(r) => Some(self.graph.rows[r].id),
-                GraphItem::File(_) => None,
-            },
+            GraphItem::File(_) | GraphItem::Folder(_) => {
+                match &items[self.parent_commit_item(&items, idx)?] {
+                    GraphItem::Commit(r) => Some(self.graph.rows[*r].id),
+                    _ => None,
+                }
+            }
         };
         oid.filter(|o| !o.is_zero())
     }
@@ -1198,9 +1212,20 @@ impl App {
         }
     }
 
+    pub fn set_graph_cursor_to_folder(&mut self, path: &str) {
+        if let Some(idx) = self
+            .graph_items()
+            .iter()
+            .position(|it| matches!(it, GraphItem::Folder(p) if p == path))
+        {
+            self.graph_cursor = idx;
+            self.graph_scroll_pending = true;
+        }
+    }
+
     pub fn graph_activate(&mut self) {
         let items = self.graph_items();
-        let Some(&item) = items.get(self.graph_cursor) else {
+        let Some(item) = items.get(self.graph_cursor).cloned() else {
             return;
         };
         match item {
@@ -1221,13 +1246,20 @@ impl App {
                     self.select_commit_file(path);
                 }
             }
+            GraphItem::Folder(path) => self.toggle_commit_fold(path),
         }
         self.graph_scroll_pending = true;
     }
 
+    pub fn toggle_commit_fold(&mut self, path: String) {
+        if !self.commit_folds.remove(&path) {
+            self.commit_folds.insert(path);
+        }
+    }
+
     pub fn graph_open_editor(&mut self) {
         let items = self.graph_items();
-        if let Some(GraphItem::File(k)) = items.get(self.graph_cursor).copied()
+        if let Some(GraphItem::File(k)) = items.get(self.graph_cursor).cloned()
             && let Some(f) = self.commit_files.get(k)
         {
             let path = f.path.clone();
@@ -1237,11 +1269,14 @@ impl App {
 
     pub fn graph_collapse(&mut self) {
         let items = self.graph_items();
-        let Some(&item) = items.get(self.graph_cursor) else {
+        let Some(item) = items.get(self.graph_cursor).cloned() else {
             return;
         };
         match item {
-            GraphItem::File(_) => {
+            GraphItem::Folder(path) if !self.commit_folds.contains(&path) => {
+                self.commit_folds.insert(path);
+            }
+            GraphItem::File(_) | GraphItem::Folder(_) => {
                 if let Some(ci) = self.parent_commit_item(&items, self.graph_cursor) {
                     self.graph_cursor = ci;
                     self.graph_scroll_pending = true;

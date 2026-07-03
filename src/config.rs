@@ -114,6 +114,7 @@ pub struct Config {
     pub graph_commit_limit: usize,
     pub graph_show_author: bool,
     pub graph_show_date: bool,
+    pub graph_files_tree: bool,
     pub mono_font: String,
     pub show_title_bar: bool,
     #[serde(alias = "confirm_delete")]
@@ -131,6 +132,7 @@ impl Default for Config {
             graph_commit_limit: 200,
             graph_show_author: true,
             graph_show_date: true,
+            graph_files_tree: true,
             mono_font: "hackgen-console-nf".to_string(),
             show_title_bar: true,
             confirm_discard: true,

@@ -209,14 +209,16 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                     let cursor = if graph_focused {
                         app.clamp_graph_cursor();
                         let items = app.graph_items();
-                        let (commit_row, file) = match items.get(app.graph_cursor) {
-                            Some(crate::app::GraphItem::Commit(r)) => (Some(*r), None),
-                            Some(crate::app::GraphItem::File(k)) => (None, Some(*k)),
-                            _ => (None, None),
+                        let (commit_row, file, folder) = match items.get(app.graph_cursor) {
+                            Some(crate::app::GraphItem::Commit(r)) => (Some(*r), None, None),
+                            Some(crate::app::GraphItem::File(k)) => (None, Some(*k), None),
+                            Some(crate::app::GraphItem::Folder(p)) => (None, None, Some(p.clone())),
+                            _ => (None, None, None),
                         };
                         Some(graph_view::GraphCursor {
                             commit_row,
                             file,
+                            folder,
                             scroll: app.graph_scroll_pending,
                             open_menu,
                         })
@@ -227,6 +229,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                     let sel_file = app.selected_commit_file.clone();
                     let show_author = app.config.graph_show_author;
                     let show_date = app.config.graph_show_date;
+                    let files_tree = app.config.graph_files_tree;
                     let mut clicked = None;
                     egui::ScrollArea::both()
                         .id_salt("graph")
@@ -241,6 +244,8 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                                 sel_file.as_deref(),
                                 show_author,
                                 show_date,
+                                files_tree,
+                                &app.commit_folds,
                                 cursor.as_ref(),
                                 &mut app.graph_menu,
                             );
@@ -254,6 +259,10 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         Some(graph_view::GraphAction::File(path)) => {
                             app.select_commit_file(path.clone());
                             app.set_graph_cursor_to_file(&path);
+                        }
+                        Some(graph_view::GraphAction::ToggleFolder(path)) => {
+                            app.toggle_commit_fold(path.clone());
+                            app.set_graph_cursor_to_folder(&path);
                         }
                         Some(graph_view::GraphAction::RebaseOnto(oid)) => {
                             app.confirm_op = Some((crate::app::GraphOp::RebaseOnto, oid))
@@ -1120,6 +1129,21 @@ fn draw_settings(app: &mut App, ctx: &egui::Context) {
             {
                 save = true;
             }
+            ui.horizontal(|ui| {
+                ui.label("Commit files");
+                if ui
+                    .selectable_value(&mut app.config.graph_files_tree, true, "\u{f07b}  Tree")
+                    .changed()
+                {
+                    save = true;
+                }
+                if ui
+                    .selectable_value(&mut app.config.graph_files_tree, false, "\u{f03a}  List")
+                    .changed()
+                {
+                    save = true;
+                }
+            });
 
             ui.add_space(8.0);
             ui.separator();

@@ -1,13 +1,18 @@
+use std::collections::HashSet;
+
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, UiBuilder, pos2, vec2};
 use git2::Oid;
 
 use crate::app::GraphMenu;
-use crate::repo::{CommitFile, Graph, RefKind, RefLabel, Segment, StatusKind};
+use crate::repo::{
+    CommitFile, CommitRowKind, Graph, RefKind, RefLabel, Segment, StatusKind, commit_file_rows,
+};
 
 const HEAD_COLOR: Color32 = Color32::from_rgb(0xff, 0xd1, 0x6b);
 
 const ROW_H: f32 = 22.0;
 const FILE_H: f32 = 18.0;
+const FILE_INDENT: f32 = 14.0;
 const COL_W: f32 = 14.0;
 const NODE_R: f32 = 4.0;
 const PAD_LEFT: f32 = 8.0;
@@ -44,6 +49,7 @@ fn kind_color(kind: StatusKind) -> Color32 {
 pub enum GraphAction {
     Commit(Oid),
     File(String),
+    ToggleFolder(String),
     RebaseOnto(Oid),
     InteractiveRebase(Oid),
     Amend,
@@ -77,6 +83,7 @@ fn parse_stash_index(name: &str) -> Option<usize> {
 pub struct GraphCursor {
     pub commit_row: Option<usize>,
     pub file: Option<usize>,
+    pub folder: Option<String>,
     pub scroll: bool,
     pub open_menu: bool,
 }
@@ -91,6 +98,8 @@ pub fn draw(
     sel_file: Option<&str>,
     show_author: bool,
     show_date: bool,
+    files_tree: bool,
+    folded: &HashSet<String>,
     cursor: Option<&GraphCursor>,
     menu: &mut Option<GraphMenu>,
 ) -> Option<GraphAction> {
@@ -123,10 +132,15 @@ pub fn draw(
         .as_ref()
         .map(|g| g.size().y + MSG_PAD * 2.0)
         .unwrap_or(0.0);
-    let files_h = if expanded_row.is_some() && !files.is_empty() {
-        files.len() as f32 * FILE_H + FILE_PAD
+    let file_rows = if expanded_row.is_some() && !files.is_empty() {
+        commit_file_rows(files, files_tree, folded)
     } else {
+        Vec::new()
+    };
+    let files_h = if file_rows.is_empty() {
         0.0
+    } else {
+        file_rows.len() as f32 * FILE_H + FILE_PAD
     };
     let file_block_h = msg_h + files_h;
 
@@ -145,9 +159,11 @@ pub fn draw(
     let hover_pos = resp.hover_pos();
     let cursor_commit = cursor.and_then(|c| c.commit_row);
     let cursor_file = cursor.and_then(|c| c.file);
+    let cursor_folder = cursor.and_then(|c| c.folder.as_deref());
 
     let mut commit_hits: Vec<(f32, f32, Oid)> = Vec::new();
     let mut file_hits: Vec<(f32, f32, String)> = Vec::new();
+    let mut folder_hits: Vec<(f32, f32, String)> = Vec::new();
     let mut cursor_rect: Option<Rect> = None;
 
     let mut y = rect.top();
@@ -270,42 +286,84 @@ pub fn draw(
             }
 
             let files_top = detail_top + msg_h;
-            for (k, f) in files.iter().enumerate() {
-                let fy = files_top + k as f32 * FILE_H;
-                let fr = Rect::from_min_max(pos2(rect.left(), fy), pos2(rect.right(), fy + FILE_H));
-                if sel_file == Some(f.path.as_str()) {
-                    painter.rect_filled(fr, 0.0, sel_bg);
-                } else if hover_pos.is_some_and(|p| fr.contains(p)) {
-                    painter.rect_filled(fr, 0.0, hover_bg);
-                }
-                if cursor_file == Some(k) {
-                    painter.rect_stroke(fr, 0.0, cursor_stroke, StrokeKind::Inside);
-                    cursor_rect = Some(fr);
-                }
+            let base_x = rect.left() + gutter + 6.0;
+            for (r, frow) in file_rows.iter().enumerate() {
+                let fy = files_top + r as f32 * FILE_H;
                 let fy_mid = fy + FILE_H / 2.0;
-                let mx = rect.left() + gutter + 6.0;
-                painter.text(
-                    pos2(mx, fy_mid),
-                    Align2::LEFT_CENTER,
-                    "\u{2514}",
-                    FontId::proportional(11.0),
-                    Color32::from_gray(110),
-                );
-                painter.text(
-                    pos2(mx + 14.0, fy_mid),
-                    Align2::LEFT_CENTER,
-                    f.kind.marker().to_string(),
-                    FontId::monospace(12.0),
-                    kind_color(f.kind),
-                );
-                painter.text(
-                    pos2(mx + 30.0, fy_mid),
-                    Align2::LEFT_CENTER,
-                    &f.path,
-                    FontId::proportional(12.0),
-                    text_color,
-                );
-                file_hits.push((fy, fy + FILE_H, f.path.clone()));
+                let indent = frow.depth as f32 * FILE_INDENT;
+                match &frow.kind {
+                    CommitRowKind::Folder { name, path, open } => {
+                        let fr = Rect::from_min_max(
+                            pos2(rect.left(), fy),
+                            pos2(rect.right(), fy + FILE_H),
+                        );
+                        if hover_pos.is_some_and(|p| fr.contains(p)) {
+                            painter.rect_filled(fr, 0.0, hover_bg);
+                        }
+                        if cursor_folder == Some(path.as_str()) {
+                            painter.rect_stroke(fr, 0.0, cursor_stroke, StrokeKind::Inside);
+                            cursor_rect = Some(fr);
+                        }
+                        painter.text(
+                            pos2(base_x + indent, fy_mid),
+                            Align2::LEFT_CENTER,
+                            if *open { "\u{25bc}" } else { "\u{25b6}" },
+                            FontId::proportional(9.0),
+                            Color32::from_gray(120),
+                        );
+                        painter.text(
+                            pos2(base_x + indent + 12.0, fy_mid),
+                            Align2::LEFT_CENTER,
+                            "\u{f07b}",
+                            FontId::proportional(12.0),
+                            Color32::from_gray(130),
+                        );
+                        painter.text(
+                            pos2(base_x + indent + 30.0, fy_mid),
+                            Align2::LEFT_CENTER,
+                            name,
+                            FontId::proportional(12.0),
+                            Color32::from_gray(150),
+                        );
+                        folder_hits.push((fy, fy + FILE_H, path.clone()));
+                    }
+                    CommitRowKind::File(k) => {
+                        let f = &files[*k];
+                        let fr = Rect::from_min_max(
+                            pos2(rect.left(), fy),
+                            pos2(rect.right(), fy + FILE_H),
+                        );
+                        if sel_file == Some(f.path.as_str()) {
+                            painter.rect_filled(fr, 0.0, sel_bg);
+                        } else if hover_pos.is_some_and(|p| fr.contains(p)) {
+                            painter.rect_filled(fr, 0.0, hover_bg);
+                        }
+                        if cursor_file == Some(*k) {
+                            painter.rect_stroke(fr, 0.0, cursor_stroke, StrokeKind::Inside);
+                            cursor_rect = Some(fr);
+                        }
+                        let label = if files_tree {
+                            f.path.rsplit('/').next().unwrap_or(&f.path)
+                        } else {
+                            f.path.as_str()
+                        };
+                        painter.text(
+                            pos2(base_x + indent, fy_mid),
+                            Align2::LEFT_CENTER,
+                            f.kind.marker().to_string(),
+                            FontId::monospace(12.0),
+                            kind_color(f.kind),
+                        );
+                        painter.text(
+                            pos2(base_x + indent + 16.0, fy_mid),
+                            Align2::LEFT_CENTER,
+                            label,
+                            FontId::proportional(12.0),
+                            text_color,
+                        );
+                        file_hits.push((fy, fy + FILE_H, f.path.clone()));
+                    }
+                }
             }
         }
 
@@ -377,6 +435,9 @@ pub fn draw(
     {
         if let Some((_, _, path)) = file_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b) {
             return Some(GraphAction::File(path.clone()));
+        }
+        if let Some((_, _, path)) = folder_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b) {
+            return Some(GraphAction::ToggleFolder(path.clone()));
         }
         if let Some((_, _, oid)) = commit_hits.iter().find(|(a, b, _)| p.y >= *a && p.y < *b) {
             return Some(GraphAction::Commit(*oid));

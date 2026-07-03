@@ -5,8 +5,8 @@ mod ops;
 mod status;
 
 pub use diff::{
-    CommitFile, DiffMode, DiffRow, FileDiff, LineKind, apply_partial, commit_diff,
-    commit_file_diff, commit_files, commit_message, discard_partial, file_diff,
+    CommitFile, CommitRowKind, DiffMode, DiffRow, FileDiff, LineKind, apply_partial, commit_diff,
+    commit_file_diff, commit_file_rows, commit_files, commit_message, discard_partial, file_diff,
 };
 pub use discovery::{RepoNode, discover, refresh_badges};
 pub use graph::{Graph, GraphRow, RefKind, RefLabel, Segment, build as build_graph};
