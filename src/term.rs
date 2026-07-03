@@ -2,8 +2,10 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+
+use regex::Regex;
 
 use alacritty_terminal::Term as AlacTerm;
 use alacritty_terminal::event::{Event as AlacEvent, EventListener};
@@ -16,6 +18,18 @@ use egui::{Align2, Color32, FontId, Pos2, Rect, pos2, vec2};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 const FONT_SIZE: f32 = 13.0;
+
+struct UrlHit {
+    url: String,
+    row: i32,
+    start: usize,
+    end: usize,
+}
+
+fn url_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)(?:https?|ftp|file)://[^\s]+").unwrap())
+}
 
 struct Size {
     cols: usize,
@@ -226,7 +240,26 @@ impl Term {
         }
         let focused = active && resp.has_focus();
 
-        self.handle_mouse(ui, &resp, rect, cw, rh);
+        let ctrl = ui.input(|i| i.modifiers.ctrl);
+        let hover_pos = if resp.hovered() {
+            ui.input(|i| i.pointer.latest_pos())
+        } else {
+            None
+        };
+        let url_hit = if ctrl {
+            hover_pos.and_then(|p| self.url_at(p, rect, cw, rh))
+        } else {
+            None
+        };
+        let mut open_url: Option<String> = None;
+        if let Some(hit) = &url_hit {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                open_url = Some(hit.url.clone());
+            }
+        }
+
+        self.handle_mouse(ui, &resp, rect, cw, rh, url_hit.is_some());
 
         let default_bg = ui.visuals().panel_fill;
         let default_fg = ui.visuals().strong_text_color();
@@ -264,6 +297,15 @@ impl Term {
         }
         for (x, y, c, fg) in glyphs {
             painter.text(pos2(x, y), Align2::LEFT_TOP, c, font.clone(), fg);
+        }
+        if let Some(hit) = &url_hit {
+            let y = rect.top() + hit.row as f32 * rh + rh - 1.0;
+            let x0 = rect.left() + hit.start as f32 * cw;
+            let x1 = rect.left() + (hit.end + 1) as f32 * cw;
+            painter.line_segment(
+                [pos2(x0, y), pos2(x1, y)],
+                egui::Stroke::new(1.0, Color32::from_rgb(0x56, 0x9c, 0xd6)),
+            );
         }
         let cur = content.cursor;
         let cursor_row = cur.point.line.0 + display_offset;
@@ -401,10 +443,65 @@ impl Term {
             self.preedit.clear();
         }
 
+        if let Some(url) = open_url {
+            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+        }
+
         clicked
     }
 
-    fn handle_mouse(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: Rect, cw: f32, rh: f32) {
+    fn url_at(&self, pos: Pos2, rect: Rect, cw: f32, rh: f32) -> Option<UrlHit> {
+        if !rect.contains(pos) {
+            return None;
+        }
+        let col = ((pos.x - rect.left()) / cw).floor() as i32;
+        let row = ((pos.y - rect.top()) / rh).floor() as i32;
+        if col < 0 || row < 0 || col >= self.cols as i32 || row >= self.rows as i32 {
+            return None;
+        }
+        let mut line = vec![' '; self.cols];
+        let content = self.term.renderable_content();
+        let display_offset = content.display_offset as i32;
+        for ind in content.display_iter {
+            if ind.point.line.0 + display_offset != row {
+                continue;
+            }
+            if let Some(slot) = line.get_mut(ind.point.column.0) {
+                let c = ind.cell.c;
+                *slot = if c == '\0' { ' ' } else { c };
+            }
+        }
+        let text: String = line.into_iter().collect();
+        for m in url_regex().find_iter(&text) {
+            let url = m
+                .as_str()
+                .trim_end_matches(|c: char| ".,;:!?)]}>'\"".contains(c));
+            if url.is_empty() {
+                continue;
+            }
+            let start = text[..m.start()].chars().count();
+            let len = url.chars().count();
+            if (col as usize) >= start && (col as usize) < start + len {
+                return Some(UrlHit {
+                    url: url.to_string(),
+                    row,
+                    start,
+                    end: start + len - 1,
+                });
+            }
+        }
+        None
+    }
+
+    fn handle_mouse(
+        &mut self,
+        ui: &egui::Ui,
+        resp: &egui::Response,
+        rect: Rect,
+        cw: f32,
+        rh: f32,
+        link_mode: bool,
+    ) {
         let mode = *self.term.mode();
         let report = mode.intersects(
             TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION,
@@ -433,6 +530,9 @@ impl Term {
                     pressed,
                     modifiers,
                 } => {
+                    if link_mode && button == egui::PointerButton::Primary {
+                        continue;
+                    }
                     let primary = button == egui::PointerButton::Primary;
                     if primary && (!report || modifiers.shift) {
                         if rect.contains(pos) && pressed {
