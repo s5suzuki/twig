@@ -424,7 +424,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         hunk_ctl,
                         nav.as_ref(),
                         find_render.as_ref(),
-                        &app.diff_hl,
+                        &mut app.diff_hl,
                         &mut app.diff_galleys,
                         diff_ver,
                     );

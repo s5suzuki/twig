@@ -6,7 +6,7 @@ use egui::{
     StrokeKind, TextFormat, pos2, text::LayoutJob, vec2,
 };
 
-use crate::highlight::{DiffHighlight, Span};
+use crate::highlight::{DiffHighlighter, Span};
 use crate::repo::{DiffRow, FileDiff, LineKind};
 
 #[derive(Default)]
@@ -85,7 +85,7 @@ pub fn draw(
     hunk_ctl: Option<bool>,
     nav: Option<&DiffNav>,
     find: Option<&FindRender>,
-    hl: &DiffHighlight,
+    hl: &mut DiffHighlighter,
     cache: &mut DiffGalleyCache,
     ver: u64,
 ) -> DiffResponse {
@@ -140,7 +140,7 @@ fn render_rows(
     hunk_ctl: Option<bool>,
     nav: Option<&DiffNav>,
     find: Option<&FindRender>,
-    hl: &DiffHighlight,
+    hl: &mut DiffHighlighter,
     cache: &mut DiffGalleyCache,
     ver: u64,
     resp: &mut DiffResponse,
@@ -254,8 +254,9 @@ fn render_rows(
                     LineKind::Changed => (Some(del_bg(dark)), Some(add_bg(dark))),
                 };
                 let find_hl = find.and_then(|f| f.rows.get(&i)).unwrap_or(&empty_hl);
-                let left_syn = hl.left.get(&i).map(Vec::as_slice).unwrap_or(&[]);
-                let right_syn = hl.right.get(&i).map(Vec::as_slice).unwrap_or(&[]);
+                hl.ensure_upto(&diff.rows, i);
+                let left_syn = hl.left(i);
+                let right_syn = hl.right(i);
 
                 let colors = CellColors {
                     default_color,

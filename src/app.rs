@@ -288,7 +288,7 @@ pub struct App {
     pub selected_commit_file: Option<String>,
     pub commit_folds: HashSet<String>,
     pub diff: FileDiff,
-    pub diff_hl: crate::highlight::DiffHighlight,
+    pub diff_hl: crate::highlight::DiffHighlighter,
     pub diff_galleys: crate::ui::diff_view::DiffGalleyCache,
     diff_ver: u64,
     diff_sig: u64,
@@ -386,7 +386,7 @@ impl App {
             selected_commit_file: None,
             commit_folds: HashSet::new(),
             diff: empty_diff(),
-            diff_hl: crate::highlight::DiffHighlight::default(),
+            diff_hl: crate::highlight::DiffHighlighter::default(),
             diff_galleys: crate::ui::diff_view::DiffGalleyCache::default(),
             diff_ver: 0,
             diff_sig: 0,
@@ -634,9 +634,9 @@ impl App {
         self.diff_hl_sig = Some(sig);
         self.diff_hl = match self.diff_path() {
             Some(path) if !self.diff.rows.is_empty() => {
-                crate::highlight::highlight_diff(&path, &self.diff.rows, dark)
+                crate::highlight::DiffHighlighter::new(&path, &self.diff.rows, dark)
             }
-            _ => crate::highlight::DiffHighlight::default(),
+            _ => crate::highlight::DiffHighlighter::default(),
         };
     }
 
@@ -1021,6 +1021,7 @@ impl App {
     pub fn select_file(&mut self, file: String, staged: bool) {
         self.reset_diff_nav();
         self.load_file_diff(file, staged);
+        self.diff_scroll_pending = true;
         self.active_tab = Tab::Diff;
         self.focus = Pane::RightTab;
     }
@@ -1110,6 +1111,8 @@ impl App {
         self.selected_commit_file = Some(file);
         self.diff_ver = self.diff_ver.wrapping_add(1);
         self.reset_diff_nav();
+        self.clamp_diff_nav();
+        self.diff_scroll_pending = true;
         self.active_tab = Tab::Diff;
     }
 

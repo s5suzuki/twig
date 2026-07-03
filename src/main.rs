@@ -49,17 +49,15 @@ fn main() -> eframe::Result<()> {
             };
             match repo::file_diff(&path, file, mode) {
                 Ok(d) => {
-                    let hl = highlight::highlight_diff(file, &d.rows, true);
-                    println!(
-                        "rows: {}  left_hl: {}  right_hl: {}",
-                        d.rows.len(),
-                        hl.left.len(),
-                        hl.right.len()
-                    );
+                    let mut hl = highlight::DiffHighlighter::new(file, &d.rows, true);
+                    hl.ensure_upto(&d.rows, d.rows.len());
+                    println!("rows: {}", d.rows.len());
                     for (i, row) in d.rows.iter().enumerate() {
-                        if let repo::DiffRow::Line { right: Some(t), .. } = row
-                            && let Some(spans) = hl.right.get(&i)
-                        {
+                        if let repo::DiffRow::Line { right: Some(t), .. } = row {
+                            let spans = hl.right(i);
+                            if spans.is_empty() {
+                                continue;
+                            }
                             print!("{i:>4} | ");
                             for &(s, e, c) in spans {
                                 print!("[{:02x}{:02x}{:02x}]{}", c.r(), c.g(), c.b(), &t[s..e]);
