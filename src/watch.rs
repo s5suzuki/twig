@@ -85,6 +85,8 @@ impl WorktreeWatcher {
                 self.watched_top.insert(path);
             }
         }
+
+        watch_git_dir(&mut self.watcher, root);
     }
 }
 
@@ -142,22 +144,32 @@ fn watch_worktree(watcher: &mut dyn Watcher, root: &Path) -> Result<HashSet<Path
 }
 
 fn watch_git_dir(watcher: &mut dyn Watcher, root: &Path) {
-    let Some(git_dir) = resolve_git_dir(root) else {
+    let Ok(repo) = git2::Repository::open(root) else {
+        let dot = root.join(".git");
+        if dot.is_dir() {
+            watch_one_git_dir(watcher, &dot);
+        }
         return;
     };
-    let _ = watcher.watch(&git_dir, RecursiveMode::NonRecursive);
+    watch_one_git_dir(watcher, repo.path());
+    if repo.commondir() != repo.path() {
+        watch_one_git_dir(watcher, repo.commondir());
+    }
+    if let Ok(subs) = repo.submodules() {
+        for sub in subs {
+            if let Ok(sub_repo) = sub.open() {
+                watch_one_git_dir(watcher, sub_repo.path());
+            }
+        }
+    }
+}
+
+fn watch_one_git_dir(watcher: &mut dyn Watcher, git_dir: &Path) {
+    let _ = watcher.watch(git_dir, RecursiveMode::NonRecursive);
     let refs = git_dir.join("refs");
     if refs.is_dir() {
         let _ = watcher.watch(&refs, RecursiveMode::Recursive);
     }
-}
-
-fn resolve_git_dir(root: &Path) -> Option<PathBuf> {
-    if let Ok(repo) = git2::Repository::open(root) {
-        return Some(repo.path().to_path_buf());
-    }
-    let dot = root.join(".git");
-    dot.is_dir().then_some(dot)
 }
 
 fn build_gitignore(root: &Path) -> Gitignore {
@@ -199,27 +211,20 @@ fn is_interesting_git_path(path: &Path) -> bool {
     {
         return false;
     }
-    let mut after_git = false;
     for c in path.components() {
-        if after_git {
-            return matches!(
-                c.as_os_str().to_str(),
-                Some(
-                    "refs"
-                        | "HEAD"
-                        | "ORIG_HEAD"
-                        | "MERGE_HEAD"
-                        | "FETCH_HEAD"
-                        | "index"
-                        | "packed-refs"
-                )
-            );
-        }
-        if c.as_os_str() == ".git" {
-            after_git = true;
+        if matches!(c.as_os_str().to_str(), Some("objects" | "logs")) {
+            return false;
         }
     }
-    false
+    if path.components().any(|c| c.as_os_str() == "refs") {
+        return true;
+    }
+    path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+        matches!(
+            n,
+            "HEAD" | "ORIG_HEAD" | "MERGE_HEAD" | "FETCH_HEAD" | "index" | "packed-refs"
+        )
+    })
 }
 
 #[cfg(test)]
@@ -314,6 +319,12 @@ mod tests {
             ".git/refs/heads/main",
             ".git/refs/tags/v1",
             ".git/refs/remotes/origin/main",
+            ".git/modules/sub/refs/heads/main",
+            ".git/modules/sub/HEAD",
+            ".git/modules/sub/index",
+            ".git/worktrees/wt1/HEAD",
+            ".git/worktrees/wt1/index",
+            ".git/worktrees/wt1/ORIG_HEAD",
         ] {
             assert!(is_interesting_git_path(&root.join(p)), "{p} should pass");
         }
@@ -321,9 +332,11 @@ mod tests {
             ".git/objects/ab/cdef",
             ".git/logs/HEAD",
             ".git/logs/refs/heads/main",
-            ".git/modules/sub/refs/heads/main",
+            ".git/modules/sub/logs/HEAD",
+            ".git/modules/sub/objects/ab/cdef",
             ".git/index.lock",
             ".git/refs/heads/main.lock",
+            ".git/modules/sub/refs/heads/main.lock",
             ".git/COMMIT_EDITMSG",
         ] {
             assert!(
