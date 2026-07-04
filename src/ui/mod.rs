@@ -6,6 +6,7 @@ mod sidebar;
 use std::collections::BTreeMap;
 
 use crate::app::{App, DiscardReq, Dir, Pane, Tab};
+use crate::config::{Accent, Theme};
 use crate::repo::{StatusEntry, StatusKind};
 
 const BTN_W: f32 = 22.0;
@@ -109,6 +110,9 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                             .on_hover_text("Replace the last commit with the staged changes");
                         if cb.changed() {
                             amend_toggle = Some(amend);
+                        }
+                        if app.config.commit_message_guide {
+                            commit_guide_row(app, ui);
                         }
                     });
                     ui.add_space(4.0);
@@ -1029,6 +1033,68 @@ fn amend_confirm_modal(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+struct CommitGuide {
+    subject_len: usize,
+    line2_nonblank: bool,
+    body_over_72: bool,
+}
+
+fn commit_guide(msg: &str) -> CommitGuide {
+    let mut lines = msg.split('\n');
+    let subject_len = lines.next().unwrap_or("").chars().count();
+    let line2_nonblank = lines.next().is_some_and(|l| !l.trim().is_empty());
+    let body_over_72 = msg.split('\n').skip(2).any(|l| l.chars().count() > 72);
+    CommitGuide {
+        subject_len,
+        line2_nonblank,
+        body_over_72,
+    }
+}
+
+fn commit_guide_row(app: &App, ui: &mut egui::Ui) {
+    if app.commit_msg.is_empty() {
+        return;
+    }
+    let g = commit_guide(&app.commit_msg);
+    let (warn, error) = if app.config.theme == Theme::CatppuccinMocha {
+        (Accent::Yellow.color(), Accent::Red.color())
+    } else {
+        (ui.visuals().warn_fg_color, ui.visuals().error_fg_color)
+    };
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let count_color = if g.subject_len > 72 {
+            error
+        } else if g.subject_len > 50 {
+            warn
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(g.subject_len.to_string())
+                    .small()
+                    .color(count_color),
+            )
+            .selectable(false),
+        )
+        .on_hover_text("Subject length (50/72 convention)");
+        if g.line2_nonblank {
+            ui.add(
+                egui::Label::new(egui::RichText::new("\u{f071}").small().color(warn))
+                    .selectable(false),
+            )
+            .on_hover_text("Line 2 should be blank to separate subject from body");
+        }
+        if g.body_over_72 {
+            ui.add(
+                egui::Label::new(egui::RichText::new("72+").small().color(warn))
+                    .selectable(false),
+            )
+            .on_hover_text("Body has lines longer than 72 columns");
+        }
+    });
+}
+
 fn draw_settings(app: &mut App, ctx: &egui::Context) {
     if !app.settings_open {
         return;
@@ -1170,6 +1236,15 @@ fn draw_settings(app: &mut App, ctx: &egui::Context) {
                 .checkbox(
                     &mut app.config.confirm_discard,
                     "Confirm before discarding changes",
+                )
+                .changed()
+            {
+                save = true;
+            }
+            if ui
+                .checkbox(
+                    &mut app.config.commit_message_guide,
+                    "Show commit message length guide",
                 )
                 .changed()
             {
@@ -2265,5 +2340,34 @@ fn marker_color(kind: StatusKind) -> egui::Color32 {
         StatusKind::Conflicted => egui::Color32::from_rgb(0xff, 0xb8, 0x6c),
         StatusKind::Submodule => egui::Color32::from_rgb(0xc8, 0x9c, 0xff),
         _ => egui::Color32::from_gray(150),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_guide;
+
+    #[test]
+    fn subject_counts_chars_not_bytes() {
+        let g = commit_guide("日本語のコミット");
+        assert_eq!(g.subject_len, 8);
+        assert!(!g.line2_nonblank);
+        assert!(!g.body_over_72);
+    }
+
+    #[test]
+    fn flags_nonblank_line2() {
+        assert!(commit_guide("subject\nbody now").line2_nonblank);
+        assert!(!commit_guide("subject\n\nbody").line2_nonblank);
+        assert!(!commit_guide("subject\n   \nbody").line2_nonblank);
+        assert!(!commit_guide("subject only").line2_nonblank);
+    }
+
+    #[test]
+    fn flags_body_over_72() {
+        let long = "x".repeat(73);
+        assert!(commit_guide(&format!("subject\n\n{long}")).body_over_72);
+        assert!(!commit_guide(&format!("subject\n\n{}", "x".repeat(72))).body_over_72);
+        assert!(!commit_guide(&format!("{long}\n\nshort body")).body_over_72);
     }
 }

@@ -120,6 +120,7 @@ pub struct Config {
     pub show_files: bool,
     #[serde(alias = "confirm_delete")]
     pub confirm_discard: bool,
+    pub commit_message_guide: bool,
     #[serde(default)]
     pub keys: BTreeMap<String, BTreeMap<String, String>>,
 }
@@ -138,6 +139,7 @@ impl Default for Config {
             show_title_bar: true,
             show_files: false,
             confirm_discard: true,
+            commit_message_guide: true,
             keys: BTreeMap::new(),
         }
     }
@@ -270,6 +272,7 @@ mod tests {
         assert!(back.graph_show_date);
         assert_eq!(back.mono_font, "hackgen-console-nf");
         assert!(back.confirm_discard);
+        assert!(back.commit_message_guide);
     }
 
     #[test]
