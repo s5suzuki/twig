@@ -70,7 +70,7 @@ fn collect_status(repo: &Repository) -> Result<(Vec<StatusEntry>, Vec<StatusEntr
         if let Some(kind) = index_kind(s) {
             let old_path = rename_old_path(kind, entry.head_to_index());
             staged.push(StatusEntry {
-                path: rename_new_path(kind, entry.head_to_index(), &path),
+                path: delta_new_path(entry.head_to_index(), &path),
                 old_path,
                 kind: if is_sub { StatusKind::Submodule } else { kind },
             });
@@ -78,7 +78,7 @@ fn collect_status(repo: &Repository) -> Result<(Vec<StatusEntry>, Vec<StatusEntr
         if let Some(kind) = worktree_kind(s) {
             let old_path = rename_old_path(kind, entry.index_to_workdir());
             unstaged.push(StatusEntry {
-                path: rename_new_path(kind, entry.index_to_workdir(), &path),
+                path: delta_new_path(entry.index_to_workdir(), &path),
                 old_path,
                 kind: if is_sub { StatusKind::Submodule } else { kind },
             });
@@ -98,14 +98,12 @@ fn rename_old_path(kind: StatusKind, delta: Option<git2::DiffDelta>) -> Option<S
     })
 }
 
-fn rename_new_path(kind: StatusKind, delta: Option<git2::DiffDelta>, fallback: &str) -> String {
-    if kind != StatusKind::Renamed {
-        return fallback.to_string();
-    }
+fn delta_new_path(delta: Option<git2::DiffDelta>, fallback: &str) -> String {
     delta
         .and_then(|d| {
             d.new_file()
                 .path()
+                .or_else(|| d.old_file().path())
                 .map(|p| p.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| fallback.to_string())
