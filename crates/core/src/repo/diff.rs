@@ -48,6 +48,25 @@ pub struct FileDiff {
     pub binary: bool,
 }
 
+impl FileDiff {
+    pub fn empty() -> Self {
+        FileDiff {
+            rows: Vec::new(),
+            note: None,
+            conflict: false,
+            rename: false,
+            binary: false,
+        }
+    }
+}
+
+pub fn hash_rows(rows: &[DiffRow]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    rows.hash(&mut h);
+    h.finish()
+}
+
 pub struct CommitFile {
     pub path: String,
     pub kind: StatusKind,

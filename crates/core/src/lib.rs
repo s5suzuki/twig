@@ -9,3 +9,4 @@ pub mod search;
 pub mod watch;
 
 pub use color::Rgb;
+pub use git2;

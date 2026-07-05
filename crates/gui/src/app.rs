@@ -608,7 +608,7 @@ impl App {
         let prev = self.selected_file.clone();
         match repo::file_diff(&self.selected, &file, mode) {
             Ok(d) => {
-                let sig = hash_diff(&d.rows);
+                let sig = repo::hash_rows(&d.rows);
                 let unchanged = prev.as_ref() == Some(&(file.clone(), staged))
                     && sig == self.diff_sig
                     && !d.rows.is_empty();
@@ -1080,7 +1080,7 @@ impl App {
         };
         match result {
             Ok(d) => {
-                self.diff_sig = hash_diff(&d.rows);
+                self.diff_sig = repo::hash_rows(&d.rows);
                 self.diff = d;
             }
             Err(e) => {
@@ -1590,7 +1590,7 @@ impl App {
         let parent = self
             .root
             .as_ref()
-            .and_then(|root| find_submodule_parent(root, &self.selected));
+            .and_then(|root| repo::find_submodule_parent(root, &self.selected));
         if let Some((parent_path, name)) = parent
             && let Err(e) = repo::stage_submodule_pointer(&parent_path, &name)
         {
@@ -2229,7 +2229,7 @@ impl App {
             DiffMode::Unstaged
         };
         if let Ok(d) = repo::file_diff(&self.selected, &file, mode) {
-            let sig = hash_diff(&d.rows);
+            let sig = repo::hash_rows(&d.rows);
             let changed = sig != self.diff_sig || d.rows.is_empty();
             self.diff = d;
             self.diff_sig = sig;
@@ -2240,13 +2240,6 @@ impl App {
             self.arm_diff_recheck(&file);
         }
     }
-}
-
-fn hash_diff(rows: &[DiffRow]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    rows.hash(&mut h);
-    h.finish()
 }
 
 fn sh_quote(s: &str) -> String {
@@ -2277,26 +2270,8 @@ fn node_is_initialized(node: &repo::RepoNode, path: &Path) -> bool {
     node.children.iter().any(|c| node_is_initialized(c, path))
 }
 
-fn find_submodule_parent(node: &repo::RepoNode, target: &Path) -> Option<(PathBuf, String)> {
-    for child in &node.children {
-        if child.path == target {
-            return Some((node.path.clone(), child.name.clone()));
-        }
-        if let Some(found) = find_submodule_parent(child, target) {
-            return Some(found);
-        }
-    }
-    None
-}
-
 fn empty_diff() -> FileDiff {
-    FileDiff {
-        rows: Vec::new(),
-        note: None,
-        conflict: false,
-        rename: false,
-        binary: false,
-    }
+    FileDiff::empty()
 }
 
 impl eframe::App for App {

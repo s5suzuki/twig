@@ -53,6 +53,18 @@ pub fn discover(path: &Path) -> Result<RepoNode, git2::Error> {
     })
 }
 
+pub fn find_submodule_parent(node: &RepoNode, target: &Path) -> Option<(PathBuf, String)> {
+    for child in &node.children {
+        if child.path == target {
+            return Some((node.path.clone(), child.name.clone()));
+        }
+        if let Some(found) = find_submodule_parent(child, target) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 pub fn refresh_badges(node: &mut RepoNode) {
     let repo = Repository::open(&node.path).ok();
     for child in &mut node.children {
