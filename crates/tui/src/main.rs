@@ -6,25 +6,82 @@ use std::time::Duration;
 use ratatui::crossterm::event::{self, Event, KeyEvent};
 use twig_core::watch::WorktreeWatcher;
 
-use twig_tui::app::TuiApp;
-use twig_tui::{clipboard, ui};
+use twig_tui::app::{TuiApp, View, ViewMode};
+use twig_tui::session::{self, Session};
+use twig_tui::{clipboard, ui, zellij};
+
+struct Args {
+    repo: String,
+    view: Option<View>,
+    session: Option<String>,
+    single: bool,
+}
+
+fn parse_args() -> Result<Args, String> {
+    let mut args = Args {
+        repo: ".".to_string(),
+        view: None,
+        session: None,
+        single: false,
+    };
+    let mut it = std::env::args().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--view" => {
+                let v = it.next().ok_or("--view requires a value")?;
+                args.view =
+                    Some(View::parse(&v).ok_or_else(|| format!("unknown view: {v}"))?);
+            }
+            "--session" => {
+                args.session = Some(it.next().ok_or("--session requires a value")?);
+            }
+            "--single" => args.single = true,
+            _ => args.repo = a,
+        }
+    }
+    Ok(args)
+}
 
 fn main() {
-    let arg = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let path = match PathBuf::from(&arg).canonicalize() {
+    let args = match parse_args() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("twig-tui: {e}");
+            std::process::exit(2);
+        }
+    };
+    let path = match PathBuf::from(&args.repo).canonicalize() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("twig-tui: cannot open {arg}: {e}");
+            eprintln!("twig-tui: cannot open {}: {e}", args.repo);
             std::process::exit(1);
         }
     };
-    let mut app = match TuiApp::new(&path) {
+
+    if args.view.is_none() && !args.single && zellij::inside_zellij() {
+        match zellij::spawn_tab(&path) {
+            Ok(()) => return,
+            Err(e) => eprintln!("twig-tui: zellij split failed ({e}); running single window"),
+        }
+    }
+
+    let view_mode = args.view.map(ViewMode::Single).unwrap_or(ViewMode::All);
+    let mut app = match TuiApp::with_view(&path, view_mode) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("twig-tui: {e}");
             std::process::exit(1);
         }
     };
+    if let ViewMode::Single(view) = view_mode {
+        let token = args.session.unwrap_or_else(|| session::repo_token(&path));
+        let dir = session::session_dir(&token);
+        let zellij_pane = std::env::var("ZELLIJ_PANE_ID").ok().filter(|v| !v.is_empty());
+        match Session::join(&dir, view.name(), std::process::id(), &path, zellij_pane) {
+            Ok(s) => app.session = Some(s),
+            Err(e) => app.error = Some(format!("session: {e}")),
+        }
+    }
 
     let (watch_tx, watch_rx) = mpsc::channel::<()>();
     let watcher = WorktreeWatcher::new(
@@ -40,6 +97,10 @@ fn main() {
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut app, &watch_rx, watcher.ok().as_ref());
     ratatui::restore();
+    let broadcast = app.quit_broadcast;
+    if let Some(mut sess) = app.session.take() {
+        sess.shutdown(broadcast);
+    }
     if let Err(e) = result {
         eprintln!("twig-tui: {e}");
         std::process::exit(1);
@@ -80,11 +141,21 @@ fn run(
             dirty = true;
         }
 
+        if app.sync_session() {
+            dirty = true;
+        }
+
         if !keys.is_empty() {
             app.handle_input(keys);
             dirty = true;
         }
 
+        if app.pending_focus_jump {
+            app.pending_focus_jump = false;
+            if let Some(target) = app.session.as_ref().and_then(|s| s.diff_target_pane()) {
+                std::thread::spawn(move || zellij::focus_pane(&target));
+            }
+        }
         if let Some(text) = app.pending_copy.take() {
             clipboard::copy(&text)?;
         }

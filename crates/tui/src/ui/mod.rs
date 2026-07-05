@@ -7,11 +7,18 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Tabs};
 
-use crate::app::{Pane, Tab, TuiApp};
+use crate::app::{Pane, Tab, TuiApp, View, ViewMode};
 
 pub const FOCUS_FG: Color = Color::Cyan;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
+    match app.view_mode {
+        ViewMode::All => draw_all(frame, app),
+        ViewMode::Single(view) => draw_single(frame, app, view),
+    }
+}
+
+fn draw_all(frame: &mut Frame, app: &mut TuiApp) {
     let cols = Layout::horizontal([
         Constraint::Length(26),
         Constraint::Length(36),
@@ -22,6 +29,37 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     draw_sidebar(frame, app, cols[0]);
     draw_changes(frame, app, cols[1]);
     draw_right(frame, app, cols[2]);
+}
+
+fn draw_single(frame: &mut Frame, app: &mut TuiApp, view: View) {
+    let mut area = frame.area();
+    if view != View::Changes
+        && let Some(err) = &app.error
+    {
+        let parts = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
+        frame.render_widget(
+            Paragraph::new(Line::styled(err.clone(), Style::default().fg(Color::Red))),
+            parts[1],
+        );
+        area = parts[0];
+    }
+    match view {
+        View::Sidebar => draw_sidebar(frame, app, area),
+        View::Changes => draw_changes(frame, app, area),
+        View::Main => draw_right(frame, app, area),
+        View::Graph => {
+            let block = pane_block("Graph", true);
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+            graph::draw(frame, app, inner);
+        }
+        View::Diff => {
+            let block = pane_block("Diff", true);
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+            diff::draw(frame, app, inner);
+        }
+    }
 }
 
 fn pane_block(title: &str, focused: bool) -> Block<'_> {

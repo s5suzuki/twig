@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use serde::{Deserialize, Serialize};
 use twig_core::config::Config;
 use twig_core::diffnav::DiffNavState;
 use twig_core::git2::Oid;
@@ -9,6 +10,7 @@ use twig_core::keymap::{Action, Chord, Context, Key, Keymap, Modifiers};
 use twig_core::repo::{self, FileDiff, Graph, RepoNode, StatusEntry};
 
 use crate::keys::{self, KeyQueue};
+use crate::session::{Session, SharedState};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pane {
@@ -17,10 +19,56 @@ pub enum Pane {
     RightTab,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Tab {
     Graph,
     Diff,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum View {
+    Sidebar,
+    Changes,
+    Main,
+    Graph,
+    Diff,
+}
+
+impl View {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "sidebar" => Self::Sidebar,
+            "changes" => Self::Changes,
+            "main" => Self::Main,
+            "graph" => Self::Graph,
+            "diff" => Self::Diff,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sidebar => "sidebar",
+            Self::Changes => "changes",
+            Self::Main => "main",
+            Self::Graph => "graph",
+            Self::Diff => "diff",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ViewMode {
+    All,
+    Single(View),
+}
+
+fn fixed_focus(view: View) -> Pane {
+    match view {
+        View::Sidebar => Pane::Sidebar,
+        View::Changes => Pane::Changes,
+        View::Main | View::Graph | View::Diff => Pane::RightTab,
+    }
 }
 
 pub struct TuiApp {
@@ -30,6 +78,9 @@ pub struct TuiApp {
     pub unstaged: Vec<StatusEntry>,
     pub focus: Pane,
     pub active_tab: Tab,
+    pub view_mode: ViewMode,
+    pub session: Option<Session>,
+    pub quit_broadcast: bool,
     pub keymap: Keymap,
     pub pending_prefix: Option<Chord>,
     pub error: Option<String>,
@@ -60,6 +111,7 @@ pub struct TuiApp {
     pub commit_input: Option<String>,
     pub pending_editor: Option<PathBuf>,
     pub pending_copy: Option<String>,
+    pub pending_focus_jump: bool,
 }
 
 pub struct SidebarRow {
@@ -70,6 +122,10 @@ pub struct SidebarRow {
 
 impl TuiApp {
     pub fn new(path: &Path) -> Result<Self, String> {
+        Self::with_view(path, ViewMode::All)
+    }
+
+    pub fn with_view(path: &Path, view_mode: ViewMode) -> Result<Self, String> {
         let config = Config::load();
         let root = repo::discover(path).map_err(|e| e.to_string())?;
         let (staged, unstaged) = repo::load_status(path).map_err(|e| e.to_string())?;
@@ -80,8 +136,17 @@ impl TuiApp {
             selected: path.to_path_buf(),
             staged,
             unstaged,
-            focus: Pane::Changes,
-            active_tab: Tab::Graph,
+            focus: match view_mode {
+                ViewMode::All => Pane::Changes,
+                ViewMode::Single(v) => fixed_focus(v),
+            },
+            active_tab: match view_mode {
+                ViewMode::Single(View::Diff) => Tab::Diff,
+                _ => Tab::Graph,
+            },
+            view_mode,
+            session: None,
+            quit_broadcast: true,
             keymap: Keymap::from_config(&config.keys),
             pending_prefix: None,
             error: None,
@@ -107,6 +172,7 @@ impl TuiApp {
             commit_input: None,
             pending_editor: None,
             pending_copy: None,
+            pending_focus_jump: false,
         })
     }
 
@@ -261,9 +327,16 @@ impl TuiApp {
             return;
         }
 
+        match self.view_mode {
+            ViewMode::All => self.handle_key_all(&mut queue),
+            ViewMode::Single(view) => self.handle_key_single(view, &mut queue),
+        }
+    }
+
+    fn handle_key_all(&mut self, queue: &mut KeyQueue) {
         let global = self
             .keymap
-            .resolve(&mut queue, Context::Global, &mut self.pending_prefix, |a| {
+            .resolve(queue, Context::Global, &mut self.pending_prefix, |a| {
                 matches!(
                     a,
                     Action::FocusLeft
@@ -284,13 +357,130 @@ impl TuiApp {
         }
 
         match self.focus {
-            Pane::Sidebar => self.sidebar_keys(&mut queue),
-            Pane::Changes => self.changes_keys(&mut queue),
+            Pane::Sidebar => self.sidebar_keys(queue),
+            Pane::Changes => self.changes_keys(queue),
             Pane::RightTab => match self.active_tab {
-                Tab::Graph => self.graph_keys(&mut queue),
-                Tab::Diff => self.diff_keys(&mut queue),
+                Tab::Graph => self.graph_keys(queue),
+                Tab::Diff => self.diff_keys(queue),
             },
         }
+    }
+
+    fn handle_key_single(&mut self, view: View, queue: &mut KeyQueue) {
+        let before = self.selection_snapshot();
+
+        if view == View::Main {
+            let global = self
+                .keymap
+                .resolve(queue, Context::Global, &mut self.pending_prefix, |a| {
+                    matches!(
+                        a,
+                        Action::CycleTab | Action::CycleTabFwd | Action::CycleTabBack
+                    )
+                });
+            for a in global {
+                match a {
+                    Action::CycleTab | Action::CycleTabFwd => self.cycle_tab(1),
+                    Action::CycleTabBack => self.cycle_tab(-1),
+                    _ => {}
+                }
+            }
+        }
+
+        match view {
+            View::Sidebar => self.sidebar_keys(queue),
+            View::Changes => self.changes_keys(queue),
+            View::Graph => self.graph_keys(queue),
+            View::Diff => self.diff_keys(queue),
+            View::Main => match self.active_tab {
+                Tab::Graph => self.graph_keys(queue),
+                Tab::Diff => self.diff_keys(queue),
+            },
+        }
+
+        self.focus = fixed_focus(view);
+        if self.selection_snapshot() != before {
+            self.publish();
+        }
+    }
+
+    fn selection_snapshot(&self) -> (PathBuf, Option<(String, bool)>, Option<Oid>, Tab) {
+        (
+            self.selected.clone(),
+            self.selected_file.clone(),
+            self.selected_commit,
+            self.active_tab,
+        )
+    }
+
+    fn publish(&mut self) {
+        let repo = self.selected.clone();
+        let file = self.selected_file.clone();
+        let commit = self.selected_commit.map(|o| o.to_string());
+        let tab = self.active_tab;
+        if let Some(sess) = self.session.as_mut() {
+            sess.publish(|st| {
+                st.selected_repo = repo;
+                st.selected_file = file;
+                st.selected_commit = commit;
+                st.active_tab = tab;
+            });
+        }
+    }
+
+    pub fn apply_shared(&mut self, st: &SharedState) {
+        if st.selected_repo != self.selected && !st.selected_repo.as_os_str().is_empty() {
+            self.select_repo(st.selected_repo.clone());
+        }
+
+        if matches!(self.view_mode, ViewMode::Single(View::Main | View::Diff)) {
+            let cur_commit = self.selected_commit.map(|o| o.to_string());
+            if let Some(hex) = &st.selected_commit {
+                if st.selected_commit != cur_commit
+                    && let Ok(oid) = Oid::from_str(hex)
+                {
+                    self.open_commit_diff(oid);
+                }
+            } else if let Some((path, staged)) = &st.selected_file {
+                if st.selected_file != self.selected_file {
+                    self.open_file_diff(path.clone(), *staged);
+                }
+            } else if self.selected_file.is_some() || self.selected_commit.is_some() {
+                self.selected_file = None;
+                self.selected_commit = None;
+                self.diff = FileDiff::empty();
+                self.diff_nav.reset();
+                self.diff_scroll = 0;
+            }
+        }
+        if self.view_mode == ViewMode::Single(View::Main) {
+            self.active_tab = st.active_tab;
+        }
+        if let ViewMode::Single(view) = self.view_mode {
+            self.focus = fixed_focus(view);
+        }
+    }
+
+    pub fn sync_session(&mut self) -> bool {
+        let Some(sess) = self.session.as_mut() else {
+            return false;
+        };
+        let tick = sess.tick();
+        let mut dirty = false;
+        if let Some(state) = tick.changed {
+            if state.quit {
+                self.quit = true;
+                self.quit_broadcast = false;
+                return true;
+            }
+            self.apply_shared(&state);
+            dirty = true;
+        }
+        if tick.quit && !self.quit {
+            self.quit = true;
+            dirty = true;
+        }
+        dirty
     }
 
     fn handle_commit_key(&mut self, ev: KeyEvent) {
@@ -397,6 +587,7 @@ impl TuiApp {
                 Action::ChangesActivate | Action::ChangesExpand => {
                     if let Some((path, staged)) = files.get(self.changes_cursor).cloned() {
                         self.open_file_diff(path, staged);
+                        self.pending_focus_jump = self.error.is_none();
                     }
                 }
                 Action::ChangesStageToggle => {
@@ -529,6 +720,7 @@ impl TuiApp {
                         && !row.is_uncommitted
                     {
                         self.open_commit_diff(row.id);
+                        self.pending_focus_jump = self.error.is_none();
                     }
                 }
                 _ => {}

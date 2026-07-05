@@ -4534,6 +4534,8 @@ name = "twig-tui"
 version = "0.1.0"
 dependencies = [
  "ratatui",
+ "serde",
+ "serde_json",
  "twig-core",
  "unicode-width",
 ]
