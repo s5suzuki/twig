@@ -18,6 +18,8 @@ pub struct SharedState {
     pub panes: BTreeMap<String, u32>,
     #[serde(default)]
     pub zellij_panes: BTreeMap<String, String>,
+    #[serde(default)]
+    pub extra_panes: Vec<String>,
 }
 
 impl SharedState {
@@ -32,8 +34,40 @@ impl SharedState {
             quit: false,
             panes: BTreeMap::new(),
             zellij_panes: BTreeMap::new(),
+            extra_panes: Vec::new(),
         }
     }
+}
+
+pub fn register_extra_pane(dir: &Path, repo: &Path, pane_id: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("session dir: {e}"))?;
+    let lock = lock_dir(dir);
+    let path = dir.join("state.json");
+    let mut state = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<SharedState>(&b).ok())
+        .filter(|s| !s.quit)
+        .unwrap_or_else(|| SharedState::new(repo));
+    if !state.extra_panes.iter().any(|p| p == pane_id) {
+        state.extra_panes.push(pane_id.to_string());
+    }
+    state.generation += 1;
+    let tmp = dir.join(format!(".state.{}.tmp", std::process::id()));
+    let json = serde_json::to_vec_pretty(&state).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    let written = std::fs::rename(&tmp, &path).map_err(|e| e.to_string());
+    drop(lock);
+    written
+}
+
+fn lock_dir(dir: &Path) -> Option<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(dir.join("lock"))
+        .ok()?;
+    file.lock().ok()?;
+    Some(file)
 }
 
 pub fn session_dir(token: &str) -> PathBuf {
@@ -128,13 +162,7 @@ impl Session {
     }
 
     fn lock(&self) -> Option<std::fs::File> {
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(self.dir.join("lock"))
-            .ok()?;
-        file.lock().ok()?;
-        Some(file)
+        lock_dir(&self.dir)
     }
 
     fn state_path(&self) -> PathBuf {
@@ -187,11 +215,11 @@ impl Session {
         Tick { changed, quit }
     }
 
-    pub fn shutdown(&mut self, broadcast_quit: bool) {
+    pub fn shutdown(&mut self, broadcast_quit: bool) -> Vec<String> {
         let lock = self.lock();
         let Some(mut state) = self.read() else {
             let _ = std::fs::remove_dir_all(&self.dir);
-            return;
+            return Vec::new();
         };
         state.panes.remove(&self.view);
         state.panes.retain(|_, p| pid_alive(*p));
@@ -200,7 +228,7 @@ impl Session {
             .retain(|v, _| state.panes.contains_key(v));
         if state.panes.is_empty() {
             let _ = std::fs::remove_dir_all(&self.dir);
-            return;
+            return state.extra_panes;
         }
         if broadcast_quit {
             state.quit = true;
@@ -208,6 +236,7 @@ impl Session {
         state.generation += 1;
         let _ = self.write(&state);
         drop(lock);
+        Vec::new()
     }
 }
 
@@ -326,6 +355,34 @@ mod tests {
         let outside = Session::join(&dir, "graph", pid, repo, None).unwrap();
         assert_eq!(outside.diff_target_pane(), Some("3".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extra_pane_ids_survive_joins_and_return_to_the_last_pane() {
+        let dir = temp_dir();
+        let repo = Path::new("/repo/h");
+        let pid = std::process::id();
+        register_extra_pane(&dir, repo, "terminal_9").unwrap();
+        register_extra_pane(&dir, repo, "terminal_9").unwrap();
+
+        let mut a = Session::join(&dir, "changes", pid, repo, None).unwrap();
+        let mut b = Session::join(&dir, "main", pid, repo, None).unwrap();
+        assert_eq!(
+            a.read().unwrap().extra_panes,
+            vec!["terminal_9".to_string()],
+            "registration is idempotent and survives joins"
+        );
+
+        assert!(
+            a.shutdown(true).is_empty(),
+            "non-final pane closes nothing"
+        );
+        assert_eq!(
+            b.shutdown(false),
+            vec!["terminal_9".to_string()],
+            "last pane receives the extra panes to close"
+        );
+        assert!(!dir.exists());
     }
 
     #[test]

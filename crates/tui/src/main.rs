@@ -16,6 +16,7 @@ struct Args {
     session: Option<String>,
     single: bool,
     new_tab: bool,
+    shell: bool,
     cols: Option<u16>,
 }
 
@@ -26,6 +27,7 @@ fn parse_args() -> Result<Args, String> {
         session: None,
         single: false,
         new_tab: false,
+        shell: false,
         cols: None,
     };
     let mut it = std::env::args().skip(1);
@@ -41,6 +43,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--single" => args.single = true,
             "--new-tab" => args.new_tab = true,
+            "--shell" => args.shell = true,
             "--cols" => {
                 let v = it.next().ok_or("--cols requires a value")?;
                 args.cols = Some(v.parse().map_err(|_| format!("invalid --cols: {v}"))?);
@@ -66,6 +69,10 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    if args.shell {
+        run_shell(&path, args.session);
+    }
 
     let mut view = args.view;
     let mut session_token = args.session;
@@ -125,12 +132,29 @@ fn main() {
     ratatui::restore();
     let broadcast = app.quit_broadcast;
     if let Some(mut sess) = app.session.take() {
-        sess.shutdown(broadcast);
+        for id in sess.shutdown(broadcast) {
+            zellij::close_pane(&id);
+        }
     }
     if let Err(e) = result {
         eprintln!("twig-tui: {e}");
         std::process::exit(1);
     }
+}
+
+fn run_shell(repo: &std::path::Path, session_token: Option<String>) -> ! {
+    let token = session_token.unwrap_or_else(|| session::repo_token(repo));
+    let dir = session::session_dir(&token);
+    if let Ok(id) = std::env::var("ZELLIJ_PANE_ID")
+        && !id.is_empty()
+    {
+        let _ = session::register_extra_pane(&dir, repo, &id);
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(&shell).current_dir(repo).exec();
+    eprintln!("twig-tui: failed to exec {shell}: {err}");
+    std::process::exit(1);
 }
 
 fn run(

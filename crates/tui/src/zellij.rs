@@ -24,9 +24,15 @@ pub fn layout_kdl(exe: &str, repo: &str, token: &str) -> String {
             args "--view" "changes" "--session" "{t}" "{r}"
             close_on_exit true
         }}
-        pane command="{e}" name="graph | diff" {{
-            args "--view" "main" "--session" "{t}" "{r}"
-            close_on_exit true
+        pane split_direction="horizontal" {{
+            pane command="{e}" name="graph | diff" {{
+                args "--view" "main" "--session" "{t}" "{r}"
+                close_on_exit true
+            }}
+            pane size="30%" command="{e}" name="terminal" {{
+                args "--shell" "--session" "{t}" "{r}"
+                close_on_exit true
+            }}
         }}
     }}
     pane size=2 borderless=true {{
@@ -74,8 +80,10 @@ pub fn focus_pane(target: &str) {
 
 pub fn split_current_tab(repo: &Path, token: &str) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    run_pane(&exe, repo, token, "changes", "changes", Some(36))?;
-    run_pane(&exe, repo, token, "graph | diff", "main", None)?;
+    run_pane(&exe, repo, "changes", "right", &["--view", "changes", "--session", token, "--cols", "36"])?;
+    run_pane(&exe, repo, "graph | diff", "right", &["--view", "main", "--session", token])?;
+    run_pane(&exe, repo, "terminal", "down", &["--shell", "--session", token])?;
+    let _ = action(&["move-focus", "up"]);
     let _ = action(&["move-focus", "left"]);
     Ok(())
 }
@@ -83,19 +91,15 @@ pub fn split_current_tab(repo: &Path, token: &str) -> Result<(), String> {
 fn run_pane(
     exe: &Path,
     repo: &Path,
-    token: &str,
     name: &str,
-    view: &str,
-    cols: Option<u16>,
+    direction: &str,
+    args: &[&str],
 ) -> Result<String, String> {
     let mut cmd = std::process::Command::new("zellij");
-    cmd.args(["run", "-d", "right", "-c", "-n", name, "--"])
+    cmd.args(["run", "-d", direction, "-c", "-n", name, "--"])
         .arg(exe)
-        .args(["--view", view, "--session", token]);
-    if let Some(c) = cols {
-        cmd.args(["--cols", &c.to_string()]);
-    }
-    cmd.arg(repo);
+        .args(args)
+        .arg(repo);
     let out = cmd.output().map_err(|e| format!("zellij not runnable: {e}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -104,6 +108,10 @@ fn run_pane(
         ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+pub fn close_pane(id: &str) {
+    let _ = action(&["close-pane", "--pane-id", id]);
 }
 
 pub fn resize_self_step() {
@@ -156,9 +164,15 @@ mod tests {
             args "--view" "changes" "--session" "p123" "/home/u/repo"
             close_on_exit true
         }
-        pane command="/usr/bin/twig-tui" name="graph | diff" {
-            args "--view" "main" "--session" "p123" "/home/u/repo"
-            close_on_exit true
+        pane split_direction="horizontal" {
+            pane command="/usr/bin/twig-tui" name="graph | diff" {
+                args "--view" "main" "--session" "p123" "/home/u/repo"
+                close_on_exit true
+            }
+            pane size="30%" command="/usr/bin/twig-tui" name="terminal" {
+                args "--shell" "--session" "p123" "/home/u/repo"
+                close_on_exit true
+            }
         }
     }
     pane size=2 borderless=true {
