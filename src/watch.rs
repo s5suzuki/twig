@@ -11,6 +11,8 @@ use notify_debouncer_mini::notify::{self, Event, RecommendedWatcher, RecursiveMo
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
+pub type Notifier = Arc<dyn Fn() + Send + Sync>;
+
 pub struct WorktreeWatcher {
     watcher: RecommendedWatcher,
     watched_top: HashSet<PathBuf>,
@@ -18,16 +20,12 @@ pub struct WorktreeWatcher {
 }
 
 impl WorktreeWatcher {
-    pub fn new(
-        root: &Path,
-        ctx: &egui::Context,
-        repaint_gate: Arc<AtomicBool>,
-    ) -> Result<Self, String> {
+    pub fn new(root: &Path, notifier: Notifier) -> Result<Self, String> {
         let dirty = Arc::new(AtomicBool::new(false));
         let gitignore = build_gitignore(root);
 
         let (tx, rx) = mpsc::channel::<()>();
-        spawn_debounce(rx, dirty.clone(), ctx.clone(), repaint_gate);
+        spawn_debounce(rx, dirty.clone(), notifier);
 
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
             let Ok(event) = res else { return };
@@ -100,19 +98,12 @@ fn is_change(kind: &EventKind) -> bool {
     )
 }
 
-fn spawn_debounce(
-    rx: mpsc::Receiver<()>,
-    dirty: Arc<AtomicBool>,
-    ctx: egui::Context,
-    repaint_gate: Arc<AtomicBool>,
-) {
+fn spawn_debounce(rx: mpsc::Receiver<()>, dirty: Arc<AtomicBool>, notifier: Notifier) {
     std::thread::spawn(move || {
         while rx.recv().is_ok() {
             while rx.recv_timeout(DEBOUNCE).is_ok() {}
             dirty.store(true, Ordering::Relaxed);
-            if repaint_gate.load(Ordering::Relaxed) {
-                ctx.request_repaint();
-            }
+            notifier();
         }
     });
 }
@@ -273,8 +264,7 @@ mod tests {
         std::fs::write(tmp.join(".gitignore"), "node_modules/\n").unwrap();
         std::fs::create_dir(tmp.join("existing")).unwrap();
 
-        let ctx = egui::Context::default();
-        let mut w = WorktreeWatcher::new(&tmp, &ctx, Arc::new(AtomicBool::new(false))).unwrap();
+        let mut w = WorktreeWatcher::new(&tmp, Arc::new(|| {})).unwrap();
         assert!(w.watched_top.contains(&tmp.join("existing")));
 
         std::fs::create_dir(tmp.join("newdir")).unwrap();
@@ -356,11 +346,16 @@ mod tests {
         std::fs::create_dir_all(git.join("logs")).unwrap();
         std::fs::create_dir_all(git.join("objects/ab")).unwrap();
 
-        let ctx = egui::Context::default();
-        let w = WorktreeWatcher::new(&tmp, &ctx, Arc::new(AtomicBool::new(false))).unwrap();
+        let notified = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = notified.clone();
+        let w = WorktreeWatcher::new(&tmp, Arc::new(move || {
+            n.fetch_add(1, Ordering::Relaxed);
+        }))
+        .unwrap();
 
         std::thread::sleep(Duration::from_millis(400));
         let _ = w.take_dirty();
+        notified.store(0, Ordering::Relaxed);
 
         std::fs::write(git.join("logs/HEAD"), "x\n").unwrap();
         std::fs::write(git.join("objects/ab/deadbeef"), "x\n").unwrap();
@@ -377,6 +372,10 @@ mod tests {
         .unwrap();
         std::thread::sleep(Duration::from_millis(600));
         assert!(w.take_dirty(), "external ref update must be detected");
+        assert!(
+            notified.load(Ordering::Relaxed) > 0,
+            "notifier must fire on external ref update"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

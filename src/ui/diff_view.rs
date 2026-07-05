@@ -490,7 +490,7 @@ fn build_galley(
     let fg_at = |pos: usize| -> Color32 {
         syn.iter()
             .find(|&&(s, e, _)| pos >= s && pos < e)
-            .map(|&(_, _, c)| c)
+            .map(|&(_, _, c)| Color32::from_rgb(c.r, c.g, c.b))
             .unwrap_or(color)
     };
     let bg_at = |pos: usize| -> Option<Color32> {

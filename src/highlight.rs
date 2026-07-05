@@ -1,6 +1,6 @@
-use egui::Color32;
+use crate::color::Rgb;
 
-pub type Span = (usize, usize, Color32);
+pub type Span = (usize, usize, Rgb);
 
 #[cfg(feature = "syntax-highlight")]
 pub use imp::DiffHighlighter;
@@ -36,11 +36,11 @@ mod imp {
     use std::path::Path;
     use std::sync::OnceLock;
 
-    use egui::Color32;
     use syntect::highlighting::{HighlightIterator, HighlightState, Highlighter, Style, Theme, ThemeSet};
     use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
 
     use super::Span;
+    use crate::color::Rgb;
     use crate::repo::{DiffRow, LineKind};
 
     const MAX_ROWS: usize = 8000;
@@ -90,7 +90,7 @@ mod imp {
             let end = pos.min(text_len);
             if end > start {
                 let c = style.foreground;
-                spans.push((start, end, Color32::from_rgb(c.r, c.g, c.b)));
+                spans.push((start, end, Rgb::new(c.r, c.g, c.b)));
             }
         }
         spans

@@ -1057,7 +1057,10 @@ fn commit_guide_row(app: &App, ui: &mut egui::Ui) {
     }
     let g = commit_guide(&app.commit_msg);
     let (warn, error) = if app.config.theme == Theme::CatppuccinMocha {
-        (Accent::Yellow.color(), Accent::Red.color())
+        (
+            crate::theme::c32(Accent::Yellow.rgb()),
+            crate::theme::c32(Accent::Red.rgb()),
+        )
     } else {
         (ui.visuals().warn_fg_color, ui.visuals().error_fg_color)
     };

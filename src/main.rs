@@ -1,4 +1,5 @@
 mod app;
+mod color;
 mod config;
 mod editor;
 mod fonts;
@@ -7,6 +8,7 @@ mod keys;
 mod repo;
 mod search;
 mod term;
+mod theme;
 mod ui;
 mod watch;
 
@@ -60,7 +62,7 @@ fn main() -> eframe::Result<()> {
                             }
                             print!("{i:>4} | ");
                             for &(s, e, c) in spans {
-                                print!("[{:02x}{:02x}{:02x}]{}", c.r(), c.g(), c.b(), &t[s..e]);
+                                print!("[{:02x}{:02x}{:02x}]{}", c.r, c.g, c.b, &t[s..e]);
                             }
                             println!();
                         }

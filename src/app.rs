@@ -476,7 +476,7 @@ impl App {
 
     pub fn apply_config(&self, ctx: &egui::Context) {
         ctx.set_zoom_factor(self.config.font_size / crate::config::BASE_FONT_SIZE);
-        ctx.set_visuals(self.config.visuals());
+        ctx.set_visuals(crate::theme::visuals(&self.config));
     }
 
     pub fn select_repo(&mut self, path: PathBuf) {
@@ -505,7 +505,14 @@ impl App {
             return;
         }
         self.watcher_started = true;
-        match crate::watch::WorktreeWatcher::new(&self.watch_root, ctx, self.repaint_gate()) {
+        let ctx = ctx.clone();
+        let gate = self.repaint_gate();
+        let notifier: crate::watch::Notifier = Arc::new(move || {
+            if gate.load(Ordering::Relaxed) {
+                ctx.request_repaint();
+            }
+        });
+        match crate::watch::WorktreeWatcher::new(&self.watch_root, notifier) {
             Ok(w) => self.watcher = Some(w),
             Err(e) => self.error = Some(e),
         }
