@@ -83,6 +83,42 @@ fn pane(repo: &Path, session_dir: &Path, view: View) -> TuiApp {
 }
 
 #[test]
+fn editor_request_from_changes_pane_opens_editor_tab_in_main_pane() {
+    if Command::new("nvim").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_repo();
+    std::fs::write(dir.join("x.txt"), "one\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let sdir = temp_dir("session");
+    let mut changes = pane(&dir, &sdir, View::Changes);
+    let mut main = pane(&dir, &sdir, View::Main);
+    main.sync_session();
+
+    let file = dir.join("x.txt");
+    let sess = changes.session.as_mut().unwrap();
+    assert!(
+        sess.request_editor(&file),
+        "request accepted when a main pane exists"
+    );
+
+    assert!(main.sync_session(), "main picks up the editor request");
+    assert_eq!(main.active_tab, Tab::Editor, "main switches to the editor tab");
+    assert!(main.term.is_some(), "main spawned the embedded nvim");
+
+    assert!(
+        !main.sync_session() || main.active_tab == Tab::Editor,
+        "request is consumed once"
+    );
+
+    let socket = main.nvim_socket.to_string_lossy().into_owned();
+    drop(main);
+    let _ = Command::new("pkill").args(["-f", &socket]).status();
+}
+
+#[test]
 fn single_changes_view_renders_full_frame() {
     let dir = temp_repo();
     std::fs::write(dir.join("a.txt"), "a\n").unwrap();

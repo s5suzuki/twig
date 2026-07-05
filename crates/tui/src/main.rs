@@ -151,10 +151,30 @@ fn run_shell(repo: &std::path::Path, session_token: Option<String>) -> ! {
         let _ = session::register_extra_pane(&dir, repo, &id);
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
-    use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(&shell).current_dir(repo).exec();
-    eprintln!("twig-tui: failed to exec {shell}: {err}");
-    std::process::exit(1);
+    let mut child = match std::process::Command::new(&shell).current_dir(repo).spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("twig-tui: failed to start {shell}: {e}");
+            std::process::exit(1);
+        }
+    };
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            std::process::exit(status.code().unwrap_or(0));
+        }
+        if session::state_gone_or_quit(&dir) {
+            let _ = std::process::Command::new("kill")
+                .args(["-HUP", &child.id().to_string()])
+                .status();
+            std::thread::sleep(Duration::from_millis(300));
+            if matches!(child.try_wait(), Ok(None)) {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+            std::process::exit(0);
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
 }
 
 fn run(
@@ -249,6 +269,10 @@ fn run(
             }
         }
 
+        if app.poll_pending_open() {
+            dirty = true;
+        }
+
         if !keys.is_empty() {
             app.handle_input(keys);
             dirty = true;
@@ -314,6 +338,15 @@ fn open_editor(
     };
 
     if app.open_in_embedded(file) {
+        return Ok(());
+    }
+
+    if let Some(sess) = app.session.as_mut()
+        && sess.request_editor(file)
+    {
+        if let Some(target) = sess.editor_target_pane() {
+            std::thread::spawn(move || zellij::focus_pane(&target));
+        }
         return Ok(());
     }
 

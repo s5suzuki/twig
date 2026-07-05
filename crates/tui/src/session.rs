@@ -20,6 +20,10 @@ pub struct SharedState {
     pub zellij_panes: BTreeMap<String, String>,
     #[serde(default)]
     pub extra_panes: Vec<String>,
+    #[serde(default)]
+    pub editor_file: Option<String>,
+    #[serde(default)]
+    pub editor_seq: u64,
 }
 
 impl SharedState {
@@ -35,6 +39,8 @@ impl SharedState {
             panes: BTreeMap::new(),
             zellij_panes: BTreeMap::new(),
             extra_panes: Vec::new(),
+            editor_file: None,
+            editor_seq: 0,
         }
     }
 }
@@ -58,6 +64,15 @@ pub fn register_extra_pane(dir: &Path, repo: &Path, pane_id: &str) -> Result<(),
     let written = std::fs::rename(&tmp, &path).map_err(|e| e.to_string());
     drop(lock);
     written
+}
+
+pub fn state_gone_or_quit(dir: &Path) -> bool {
+    match std::fs::read(dir.join("state.json")) {
+        Err(_) => true,
+        Ok(bytes) => serde_json::from_slice::<SharedState>(&bytes)
+            .map(|s| s.quit)
+            .unwrap_or(false),
+    }
 }
 
 fn lock_dir(dir: &Path) -> Option<std::fs::File> {
@@ -147,6 +162,30 @@ impl Session {
         drop(lock);
         written?;
         Ok(sess)
+    }
+
+    pub fn request_editor(&mut self, file: &Path) -> bool {
+        let has_main = self
+            .read()
+            .is_some_and(|s| s.panes.contains_key("main"));
+        if !has_main {
+            return false;
+        }
+        let file = file.to_string_lossy().into_owned();
+        self.publish(|st| {
+            st.editor_file = Some(file);
+            st.editor_seq += 1;
+        });
+        true
+    }
+
+    pub fn editor_target_pane(&self) -> Option<String> {
+        let state = self.read()?;
+        let target = state.zellij_panes.get("main")?;
+        if Some(target) == self.zellij_pane.as_ref() {
+            return None;
+        }
+        Some(target.clone())
     }
 
     pub fn diff_target_pane(&self) -> Option<String> {
@@ -355,6 +394,21 @@ mod tests {
         let outside = Session::join(&dir, "graph", pid, repo, None).unwrap();
         assert_eq!(outside.diff_target_pane(), Some("3".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn state_gone_or_quit_tracks_session_teardown() {
+        let dir = temp_dir();
+        let repo = Path::new("/repo/i");
+        register_extra_pane(&dir, repo, "terminal_1").unwrap();
+        assert!(!state_gone_or_quit(&dir), "live session keeps the shell");
+
+        let mut sess = Session::join(&dir, "main", std::process::id(), repo, None).unwrap();
+        sess.publish(|s| s.quit = true);
+        assert!(state_gone_or_quit(&dir), "quit broadcast stops the shell");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(state_gone_or_quit(&dir), "removed session dir stops the shell");
     }
 
     #[test]

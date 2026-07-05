@@ -9,6 +9,34 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use twig_tui::app::{Pane, Tab, TuiApp};
 use twig_tui::ui;
 
+fn isolate_xdg() -> PathBuf {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    let dir = std::env::temp_dir().join(format!("twig-tui-editor-xdg-{}", std::process::id()));
+    INIT.call_once(|| {
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", dir.join("config"));
+            std::env::set_var("XDG_DATA_HOME", dir.join("data"));
+            std::env::set_var("XDG_STATE_HOME", dir.join("state"));
+        }
+    });
+    dir
+}
+
+fn has_nvim() -> bool {
+    Command::new("nvim").arg("--version").output().is_ok()
+}
+
+fn cleanup(app: TuiApp, dirs: &[&Path]) {
+    let socket = app.nvim_socket.to_string_lossy().into_owned();
+    drop(app);
+    let _ = Command::new("pkill").args(["-f", &socket]).status();
+    for d in dirs {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .arg("-C")
@@ -24,7 +52,9 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn temp_repo() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("twig-tui-editor-{}", std::process::id()));
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("twig-tui-editor-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);
@@ -83,17 +113,10 @@ fn wait_for(app: &mut TuiApp, needle: &str, secs: u64) -> Vec<String> {
 
 #[test]
 fn embedded_nvim_tab_starts_edits_and_keeps_q_local() {
-    if Command::new("nvim").arg("--version").output().is_err() {
+    if !has_nvim() {
         return;
     }
-    let isolated = std::env::temp_dir().join(format!("twig-tui-editor-xdg-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&isolated);
-    std::fs::create_dir_all(&isolated).unwrap();
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", isolated.join("config"));
-        std::env::set_var("XDG_DATA_HOME", isolated.join("data"));
-        std::env::set_var("XDG_STATE_HOME", isolated.join("state"));
-    }
+    isolate_xdg();
     let dir = temp_repo();
     std::fs::write(dir.join("hello.txt"), "embedded-editor-line 日本語行\n").unwrap();
     git(&dir, &["add", "-A"]);
@@ -147,14 +170,62 @@ fn embedded_nvim_tab_starts_edits_and_keeps_q_local() {
     ]);
     wait_for(&mut app, "typed", 10);
 
+    app.handle_input(vec![key(KeyCode::Tab)]);
+    assert_eq!(
+        app.active_tab,
+        Tab::Graph,
+        "tab cycles out of the editor like the GUI"
+    );
+    app.handle_input(vec![key(KeyCode::BackTab)]);
+    assert_eq!(app.active_tab, Tab::Editor, "shift+tab cycles back in");
+
     let mut ev = key(KeyCode::Char('h'));
     ev.modifiers = KeyModifiers::ALT;
     app.handle_input(vec![ev]);
     assert_ne!(app.focus, Pane::RightTab, "alt+h leaves the editor pane");
 
-    let socket = app.nvim_socket.to_string_lossy().into_owned();
-    drop(app);
-    let _ = Command::new("pkill").args(["-f", &socket]).status();
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&isolated);
+    cleanup(app, &[&dir]);
+}
+
+#[test]
+fn open_in_embedded_spawns_nvim_and_opens_the_file() {
+    if !has_nvim() {
+        return;
+    }
+    isolate_xdg();
+    let dir = temp_repo();
+    std::fs::write(dir.join("from-e.txt"), "opened-via-e-key\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    assert!(app.term.is_none());
+
+    let file = dir.join("from-e.txt");
+    assert!(
+        app.open_in_embedded(&file),
+        "e path spawns the editor even when it is not running yet"
+    );
+    assert_eq!(app.active_tab, Tab::Editor, "switches to the editor tab");
+    assert!(app.term.is_some(), "nvim spawned on demand");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        app.poll_pending_open();
+        if let Some(t) = app.term.as_mut() {
+            t.pump();
+        }
+        let lines = screen(&mut app, 120, 35);
+        if lines.iter().any(|l| l.contains("opened-via-e-key")) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "file never opened:\n{}",
+            lines.join("\n")
+        );
+        std::thread::sleep(Duration::from_millis(30));
+    }
+
+    cleanup(app, &[&dir]);
 }

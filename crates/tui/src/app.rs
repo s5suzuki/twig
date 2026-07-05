@@ -479,6 +479,8 @@ pub struct TuiApp {
     pub pending_focus_jump: bool,
     pub term: Option<crate::term::EditorTerm>,
     pub nvim_socket: PathBuf,
+    pub pending_open: Option<(PathBuf, std::time::Instant)>,
+    editor_seq_seen: Option<u64>,
 }
 
 pub struct SidebarRow {
@@ -559,6 +561,8 @@ impl TuiApp {
             pending_focus_jump: false,
             term: None,
             nvim_socket: nvim_socket_path(),
+            pending_open: None,
+            editor_seq_seen: None,
         };
         app.sync_stash_and_seq();
         Ok(app)
@@ -1092,6 +1096,16 @@ impl TuiApp {
         }
         if self.view_mode == ViewMode::Single(View::Main) {
             self.active_tab = st.active_tab;
+            match self.editor_seq_seen {
+                None => self.editor_seq_seen = Some(st.editor_seq),
+                Some(prev) if st.editor_seq > prev => {
+                    self.editor_seq_seen = Some(st.editor_seq);
+                    if let Some(file) = st.editor_file.clone() {
+                        self.open_in_embedded(Path::new(&file));
+                    }
+                }
+                _ => {}
+            }
         }
         if let ViewMode::Single(view) = self.view_mode {
             self.focus = fixed_focus(view);
@@ -2609,12 +2623,11 @@ impl TuiApp {
             return;
         }
         let alt = ev.modifiers.contains(KeyModifiers::ALT);
-        let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
         match ev.code {
             KeyCode::Char('h') if alt => return self.focus_move(-1),
             KeyCode::Char('l') if alt => return self.focus_move(1),
-            KeyCode::Tab if ctrl => return self.cycle_tab(1),
-            KeyCode::BackTab if ctrl => return self.cycle_tab(-1),
+            KeyCode::Tab => return self.cycle_tab(1),
+            KeyCode::BackTab => return self.cycle_tab(-1),
             _ => {}
         }
         if let Some(t) = self.term.as_mut() {
@@ -2626,25 +2639,59 @@ impl TuiApp {
         if !matches!(self.view_mode, ViewMode::All | ViewMode::Single(View::Main)) {
             return false;
         }
-        if !self.term.as_mut().is_some_and(|t| t.is_alive()) {
-            return false;
-        }
-        match twig_core::editor::open_abs_in_server(file, &self.nvim_socket) {
-            Ok(()) => self.error = None,
-            Err(e) => self.error = Some(e),
+        self.ensure_editor();
+        if self.term.is_none() {
+            return true;
         }
         self.active_tab = Tab::Editor;
         self.focus = Pane::RightTab;
+        if self.nvim_socket.exists() {
+            match twig_core::editor::open_abs_in_server(file, &self.nvim_socket) {
+                Ok(()) => self.error = None,
+                Err(e) => self.error = Some(e),
+            }
+        } else {
+            self.pending_open = Some((
+                file.to_path_buf(),
+                std::time::Instant::now() + std::time::Duration::from_secs(10),
+            ));
+        }
         true
+    }
+
+    pub fn poll_pending_open(&mut self) -> bool {
+        let Some((file, deadline)) = self.pending_open.clone() else {
+            return false;
+        };
+        if !self.term.as_mut().is_some_and(|t| t.is_alive()) {
+            self.pending_open = None;
+            return true;
+        }
+        if self.nvim_socket.exists() {
+            self.pending_open = None;
+            match twig_core::editor::open_abs_in_server(&file, &self.nvim_socket) {
+                Ok(()) => self.error = None,
+                Err(e) => self.error = Some(e),
+            }
+            return true;
+        }
+        if std::time::Instant::now() > deadline {
+            self.pending_open = None;
+            self.error = Some("nvim did not open its socket".to_string());
+            return true;
+        }
+        false
     }
 }
 
 fn nvim_socket_path() -> PathBuf {
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join("twig")
-        .join(format!("{}-nvim.sock", std::process::id()))
+        .join(format!("{}-{n}-nvim.sock", std::process::id()))
 }
 
 fn diff_mode(staged: bool) -> repo::DiffMode {
