@@ -152,7 +152,7 @@ fn sidebar_nav(app: &mut App, ui: &mut egui::Ui, rows: &[SideRow]) -> Option<Nav
         return None;
     }
 
-    use crate::keys::{Action as Cmd, Context};
+    use crate::keys::{Action as Cmd, Context, KeymapPoll};
     let acts = app
         .keymap
         .poll(ui, Context::Sidebar, &mut app.pending_prefix, |_| true);

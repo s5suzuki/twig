@@ -371,7 +371,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                                     app.request_discard_selection();
                                 }
                                 if ui.button("Clear").clicked() {
-                                    app.diff_anchor = None;
+                                    app.diff_nav.anchor = None;
                                 }
                             }
                             ui.weak(&path);
@@ -417,7 +417,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         file_sel.as_ref().map(|(_, staged)| *staged)
                     };
                     let nav = file_sel.as_ref().map(|_| diff_view::DiffNav {
-                        cursor: app.diff_cursor.min(app.diff_last_row()),
+                        cursor: app.diff_nav.cursor.min(app.diff_last_row()),
                         sel: app.diff_highlight(),
                         scroll_to_cursor: app.diff_scroll_pending,
                         center: app.diff_scroll_center,
@@ -444,7 +444,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                         app.toggle_hunk(idx);
                     }
                     if let Some((a, c)) = resp.drag_select {
-                        app.diff_anchor = Some(a);
+                        app.diff_nav.anchor = Some(a);
                         app.set_diff_cursor(c);
                         app.diff_scroll_pending = false;
                         app.focus = Pane::RightTab;
@@ -1438,7 +1438,7 @@ fn rebase_banner(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
-    use crate::keys::{Action, Context};
+    use crate::keys::{Action, Context, KeymapPoll};
 
     if app.focus == Pane::Terminal && !app.shell_open {
         app.focus = Pane::RightTab;
@@ -1528,7 +1528,7 @@ fn handle_global_keys(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
-    use crate::keys::{Action, Context};
+    use crate::keys::{Action, Context, KeymapPoll};
 
     if app.focus != Pane::RightTab
         || app.active_tab != Tab::Diff
@@ -1550,7 +1550,7 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
     });
     if copy_event && let Some(text) = app.diff_selection_text() {
         ui.ctx().copy_text(text);
-        app.diff_anchor = None;
+        app.diff_nav.anchor = None;
     }
 
     let actions = app
@@ -1566,7 +1566,7 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
             Action::DiffNextHunk => app.jump_hunk(true),
             Action::DiffPrevHunk => app.jump_hunk(false),
             Action::DiffToggleVisual => app.toggle_diff_visual(),
-            Action::DiffClearVisual => app.diff_anchor = None,
+            Action::DiffClearVisual => app.diff_nav.anchor = None,
             Action::DiffStageSelection => {
                 if !staged && !conflict {
                     app.apply_line_selection();
@@ -1594,7 +1594,7 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
             Action::DiffCopySelection => {
                 if let Some(text) = app.diff_selection_text() {
                     ui.ctx().copy_text(text);
-                    app.diff_anchor = None;
+                    app.diff_nav.anchor = None;
                 }
             }
             _ => {}
@@ -1603,7 +1603,7 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn graph_keys(app: &mut App, ui: &mut egui::Ui) -> bool {
-    use crate::keys::{Action, Context};
+    use crate::keys::{Action, Context, KeymapPoll};
 
     if app.graph_menu.is_some() {
         return false;
@@ -1908,7 +1908,7 @@ fn changes_nav(app: &mut App, ui: &mut egui::Ui, rows: &[NavRow]) -> Option<Acti
         return None;
     }
 
-    use crate::keys::{Action as Cmd, Context};
+    use crate::keys::{Action as Cmd, Context, KeymapPoll};
     let acts = app
         .keymap
         .poll(ui, Context::Changes, &mut app.pending_prefix, |_| true);

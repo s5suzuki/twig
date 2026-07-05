@@ -8,8 +8,9 @@ use std::thread;
 use git2::Oid;
 
 use twig_core::config::Config;
+use twig_core::diffnav::{self, DiffNavState};
 use crate::keys::{Chord, Keymap};
-use twig_core::repo::{self, DiffMode, DiffRow, FileDiff, Graph, LineKind, RepoNode, StatusEntry};
+use twig_core::repo::{self, DiffMode, DiffRow, FileDiff, Graph, RepoNode, StatusEntry};
 use twig_core::search;
 
 pub const LIST_PAGE: usize = 10;
@@ -304,8 +305,7 @@ pub struct App {
     diff_recheck_at: f64,
     in_recheck: bool,
     diff_hl_sig: Option<(u64, bool)>,
-    pub diff_cursor: usize,
-    pub diff_anchor: Option<usize>,
+    pub diff_nav: DiffNavState,
     pub diff_scroll_pending: bool,
     pub diff_scroll_center: bool,
     pub diff_scrolled_prev: bool,
@@ -406,8 +406,7 @@ impl App {
             diff_recheck_at: 0.0,
             in_recheck: false,
             diff_hl_sig: None,
-            diff_cursor: 0,
-            diff_anchor: None,
+            diff_nav: DiffNavState::default(),
             diff_scroll_pending: false,
             diff_scroll_center: false,
             diff_scrolled_prev: false,
@@ -689,7 +688,7 @@ impl App {
 
     fn scroll_to_find(&mut self) {
         if let Some(m) = self.find.matches.get(self.find.current) {
-            self.diff_cursor = m.row.min(self.diff_last_row());
+            self.diff_nav.cursor = m.row.min(self.diff_last_row());
             self.diff_scroll_pending = true;
         }
     }
@@ -888,179 +887,67 @@ impl App {
     }
 
     fn reset_diff_nav(&mut self) {
-        self.diff_cursor = 0;
-        self.diff_anchor = None;
+        self.diff_nav.reset();
         self.diff_scroll_pending = false;
         self.diff_visible = None;
     }
 
     fn clamp_diff_nav(&mut self) {
-        let last = self.diff_last_row();
-        if self.diff_cursor > last {
-            self.diff_cursor = last;
-        }
-        if let Some(a) = self.diff_anchor
-            && a > last
-        {
-            self.diff_anchor = Some(last);
-        }
-
-        if !self.diff.rows.is_empty() && !self.is_line_row(self.diff_cursor) {
-            let fwd = (self.diff_cursor..=last).find(|&i| self.is_line_row(i));
-            let back = (0..self.diff_cursor).rev().find(|&i| self.is_line_row(i));
-            if let Some(i) = fwd.or(back) {
-                self.diff_cursor = i;
-            }
-        }
+        self.diff_nav.clamp(&self.diff.rows);
     }
 
     pub fn diff_last_row(&self) -> usize {
-        self.diff.rows.len().saturating_sub(1)
+        diffnav::last_row(&self.diff.rows)
     }
 
     pub fn move_diff_cursor(&mut self, delta: isize) {
         let last = self.diff_last_row();
-        let cur = self.diff_cursor.min(last);
+        let cur = self.diff_nav.cursor.min(last);
 
         if !self.diff_scrolled_prev
             && let Some((vt, vb)) = self.diff_visible
         {
             if cur < vt {
-                self.diff_cursor = vt;
+                self.diff_nav.cursor = vt;
                 self.diff_scroll_pending = true;
                 return;
             }
             if cur > vb {
-                self.diff_cursor = vb;
+                self.diff_nav.cursor = vb;
                 self.diff_scroll_pending = true;
                 return;
             }
         }
-        self.diff_cursor = self.step_line_row(cur, delta);
+        self.diff_nav.step(&self.diff.rows, delta);
         self.diff_scroll_pending = true;
-    }
-
-    fn is_line_row(&self, i: usize) -> bool {
-        matches!(self.diff.rows.get(i), Some(DiffRow::Line { .. }))
-    }
-
-    fn step_line_row(&self, from: usize, delta: isize) -> usize {
-        let last = self.diff_last_row();
-        let step = if delta >= 0 { 1 } else { -1 };
-        let mut i = from as isize;
-        loop {
-            let ni = i + step;
-            if ni < 0 || ni > last as isize {
-                return from;
-            }
-            i = ni;
-            if self.is_line_row(i as usize) {
-                return i as usize;
-            }
-        }
     }
 
     pub fn set_diff_cursor(&mut self, row: usize) {
-        self.diff_cursor = row.min(self.diff_last_row());
+        self.diff_nav.set_cursor(&self.diff.rows, row);
         self.diff_scroll_pending = true;
     }
 
-    fn hunk_starts(&self) -> Vec<usize> {
-        let rows = &self.diff.rows;
-        let has_header = rows.iter().any(|r| matches!(r, DiffRow::Hunk { .. }));
-        let mut starts = Vec::new();
-        let is_change = |k: &LineKind| *k != LineKind::Context;
-        if has_header {
-            let mut awaiting = false;
-            for (i, r) in rows.iter().enumerate() {
-                match r {
-                    DiffRow::Hunk { .. } => awaiting = true,
-                    DiffRow::Line { kind, .. } if awaiting && is_change(kind) => {
-                        starts.push(i);
-                        awaiting = false;
-                    }
-                    _ => {}
-                }
-            }
-        } else {
-            let mut in_run = false;
-            for (i, r) in rows.iter().enumerate() {
-                match r {
-                    DiffRow::Line { kind, .. } if is_change(kind) => {
-                        if !in_run {
-                            starts.push(i);
-                            in_run = true;
-                        }
-                    }
-                    _ => in_run = false,
-                }
-            }
-        }
-        starts
-    }
-
     pub fn jump_hunk(&mut self, forward: bool) {
-        let starts = self.hunk_starts();
-        if starts.is_empty() {
-            return;
-        }
-        let cur = self.diff_cursor.min(self.diff_last_row());
-        let target = if forward {
-            starts.iter().copied().find(|&s| s > cur)
-        } else {
-            starts.iter().rev().copied().find(|&s| s < cur)
-        };
-        if let Some(t) = target {
-            self.diff_cursor = t;
+        if self.diff_nav.jump_hunk(&self.diff.rows, forward) {
             self.diff_scroll_pending = true;
             self.diff_scroll_center = true;
         }
     }
 
     pub fn toggle_diff_visual(&mut self) {
-        self.diff_anchor = if self.diff_anchor.is_some() {
-            None
-        } else {
-            Some(self.diff_cursor)
-        };
+        self.diff_nav.toggle_visual();
     }
 
     pub fn diff_highlight(&self) -> Option<(usize, usize)> {
-        self.diff_anchor.map(|a| {
-            let last = self.diff_last_row();
-            let a = a.min(last);
-            let c = self.diff_cursor.min(last);
-            (a.min(c), a.max(c))
-        })
+        self.diff_nav.highlight(&self.diff.rows)
     }
 
     fn diff_action_range(&self) -> Option<(usize, usize)> {
-        if self.diff.rows.is_empty() {
-            return None;
-        }
-        let last = self.diff_last_row();
-        let c = self.diff_cursor.min(last);
-        Some(match self.diff_anchor {
-            Some(a) => {
-                let a = a.min(last);
-                (a.min(c), a.max(c))
-            }
-            None => (c, c),
-        })
+        self.diff_nav.action_range(&self.diff.rows)
     }
 
     pub fn diff_selection_text(&self) -> Option<String> {
-        let (lo, hi) = self.diff_action_range()?;
-        let mut out = String::new();
-        for row in self.diff.rows[lo..=hi].iter() {
-            let DiffRow::Line { left, right, .. } = row else {
-                continue;
-            };
-            let text = right.as_deref().or(left.as_deref()).unwrap_or("");
-            out.push_str(text);
-            out.push('\n');
-        }
-        if out.is_empty() { None } else { Some(out) }
+        self.diff_nav.selection_text(&self.diff.rows)
     }
 
     pub fn apply_line_selection(&mut self) {
@@ -1077,7 +964,7 @@ impl App {
         {
             self.error = Some(format!("partial stage failed: {e}"));
         }
-        self.diff_anchor = None;
+        self.diff_nav.anchor = None;
         self.after_index_change();
     }
 
@@ -1105,7 +992,7 @@ impl App {
         if let Err(e) = repo::discard_partial(&self.selected, path, &self.diff.rows, lo, hi) {
             self.error = Some(format!("partial discard failed: {e}"));
         }
-        self.diff_anchor = None;
+        self.diff_nav.anchor = None;
         self.after_index_change();
     }
 
@@ -1118,8 +1005,7 @@ impl App {
     }
 
     fn cursor_to_first_hunk(&mut self) {
-        if let Some(&first) = self.hunk_starts().first() {
-            self.diff_cursor = first;
+        if self.diff_nav.first_hunk(&self.diff.rows) {
             self.diff_scroll_center = true;
         }
         self.diff_scroll_pending = true;
@@ -1431,7 +1317,7 @@ impl App {
             tab: self.active_tab,
             focus: self.focus,
             sel,
-            diff_cursor: self.diff_cursor,
+            diff_cursor: self.diff_nav.cursor,
         }
     }
 
@@ -1470,7 +1356,7 @@ impl App {
         self.active_tab = p.tab;
         self.focus = p.focus;
         if matches!(p.sel, NavSel::File { .. } | NavSel::CommitFile { .. }) {
-            self.diff_cursor = p.diff_cursor.min(self.diff_last_row());
+            self.diff_nav.cursor = p.diff_cursor.min(self.diff_last_row());
             self.diff_scroll_pending = true;
         }
         self.nav_current = Some(self.current_nav_point());
@@ -1586,17 +1472,8 @@ impl App {
             Some((top, bottom)) => bottom.saturating_sub(top) + 1,
             None => 20,
         };
-        let steps = ((visible_rows as f32 * fraction).round() as isize).max(1);
-        let mut cur = self.diff_cursor.min(self.diff_last_row());
-        let dir = if down { 1 } else { -1 };
-        for _ in 0..steps {
-            let next = self.step_line_row(cur, dir);
-            if next == cur {
-                break;
-            }
-            cur = next;
-        }
-        self.diff_cursor = cur;
+        self.diff_nav
+            .scroll(&self.diff.rows, visible_rows, fraction, down);
         self.diff_scroll_pending = true;
     }
 

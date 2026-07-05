@@ -611,8 +611,8 @@ fn selftest(path: &std::path::Path, file: &str) {
     let report = |tag: &str, app: &app::App| {
         println!(
             "{tag:<16} cursor={} anchor={:?} visible={:?} rows={} sel={:?} err={:?}",
-            app.diff_cursor,
-            app.diff_anchor,
+            app.diff_nav.cursor,
+            app.diff_nav.anchor,
             app.diff_visible,
             app.diff.rows.len(),
             app.selected_file,
@@ -666,7 +666,7 @@ fn selftest(path: &std::path::Path, file: &str) {
     report("idle after j", &app);
 
     println!("\n-- fast j x120 (one per frame), cursor must advance monotonically --");
-    let mut prev = app.diff_cursor;
+    let mut prev = app.diff_nav.cursor;
     let mut backward = 0;
     let mut min_seen = prev;
     let mut non_line = 0;
@@ -690,7 +690,7 @@ fn selftest(path: &std::path::Path, file: &str) {
                 },
             ],
         );
-        let c = app.diff_cursor;
+        let c = app.diff_nav.cursor;
         if c < prev {
             backward += 1;
             min_seen = min_seen.min(c);
@@ -702,7 +702,7 @@ fn selftest(path: &std::path::Path, file: &str) {
     }
     println!(
         "final cursor={} backward_jumps={} non_line_landings={} (both 0 = good)  visible={:?}",
-        app.diff_cursor, backward, non_line, app.diff_visible
+        app.diff_nav.cursor, backward, non_line, app.diff_visible
     );
 
     let p1 = egui::pos2(800.0, 120.0);
@@ -822,7 +822,7 @@ fn selftest_search(path: &std::path::Path, pattern: &str) {
         app.find_next();
         println!(
             "find_next -> current={} cursor={}",
-            app.find.current, app.diff_cursor
+            app.find.current, app.diff_nav.cursor
         );
     }
 
