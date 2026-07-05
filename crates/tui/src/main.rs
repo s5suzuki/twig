@@ -1,8 +1,3 @@
-mod app;
-mod clipboard;
-mod keys;
-mod ui;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -11,7 +6,8 @@ use std::time::Duration;
 use ratatui::crossterm::event::{self, Event, KeyEvent};
 use twig_core::watch::WorktreeWatcher;
 
-use app::TuiApp;
+use twig_tui::app::TuiApp;
+use twig_tui::{clipboard, ui};
 
 fn main() {
     let arg = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());

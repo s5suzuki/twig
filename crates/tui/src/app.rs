@@ -10,14 +10,14 @@ use twig_core::repo::{self, FileDiff, Graph, RepoNode, StatusEntry};
 
 use crate::keys::{self, KeyQueue};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pane {
     Sidebar,
     Changes,
     RightTab,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
     Graph,
     Diff,
@@ -237,15 +237,20 @@ impl TuiApp {
     }
 
     pub fn handle_input(&mut self, events: Vec<KeyEvent>) {
-        if self.commit_input.is_some() {
-            for ev in events {
-                self.handle_commit_key(ev);
+        for ev in events {
+            if self.quit {
+                return;
             }
-            return;
+            if self.commit_input.is_some() {
+                self.handle_commit_key(ev);
+            } else if let Some(nk) = keys::normalize(&ev) {
+                self.handle_key(nk);
+            }
         }
+    }
 
-        let normalized: Vec<_> = events.iter().filter_map(keys::normalize).collect();
-        let mut queue = KeyQueue(normalized);
+    fn handle_key(&mut self, nk: (Modifiers, Key)) {
+        let mut queue = KeyQueue(vec![nk]);
 
         if queue.take(Modifiers::NONE, Key::Q) || queue.take(Modifiers::CTRL, Key::C) {
             self.quit = true;
