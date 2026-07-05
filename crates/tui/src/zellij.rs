@@ -72,6 +72,48 @@ pub fn focus_pane(target: &str) {
     }
 }
 
+pub fn split_current_tab(repo: &Path, token: &str) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    run_pane(&exe, repo, token, "changes", "changes", Some(36))?;
+    run_pane(&exe, repo, token, "graph | diff", "main", None)?;
+    let _ = action(&["move-focus", "left"]);
+    Ok(())
+}
+
+fn run_pane(
+    exe: &Path,
+    repo: &Path,
+    token: &str,
+    name: &str,
+    view: &str,
+    cols: Option<u16>,
+) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("zellij");
+    cmd.args(["run", "-d", "right", "-c", "-n", name, "--"])
+        .arg(exe)
+        .args(["--view", view, "--session", token]);
+    if let Some(c) = cols {
+        cmd.args(["--cols", &c.to_string()]);
+    }
+    cmd.arg(repo);
+    let out = cmd.output().map_err(|e| format!("zellij not runnable: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "zellij run failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+pub fn resize_self_step() {
+    if let Ok(id) = std::env::var("ZELLIJ_PANE_ID")
+        && !id.is_empty()
+    {
+        let _ = action(&["resize", "decrease", "right", "--pane-id", &id]);
+    }
+}
+
 pub fn spawn_tab(repo: &Path) -> Result<(), String> {
     let token = session::pid_token();
     let dir = session::session_dir(&token);

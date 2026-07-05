@@ -15,6 +15,8 @@ struct Args {
     view: Option<View>,
     session: Option<String>,
     single: bool,
+    new_tab: bool,
+    cols: Option<u16>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -23,6 +25,8 @@ fn parse_args() -> Result<Args, String> {
         view: None,
         session: None,
         single: false,
+        new_tab: false,
+        cols: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -36,6 +40,11 @@ fn parse_args() -> Result<Args, String> {
                 args.session = Some(it.next().ok_or("--session requires a value")?);
             }
             "--single" => args.single = true,
+            "--new-tab" => args.new_tab = true,
+            "--cols" => {
+                let v = it.next().ok_or("--cols requires a value")?;
+                args.cols = Some(v.parse().map_err(|_| format!("invalid --cols: {v}"))?);
+            }
             _ => args.repo = a,
         }
     }
@@ -58,14 +67,31 @@ fn main() {
         }
     };
 
-    if args.view.is_none() && !args.single && zellij::inside_zellij() {
-        match zellij::spawn_tab(&path) {
-            Ok(()) => return,
-            Err(e) => eprintln!("twig-tui: zellij split failed ({e}); running single window"),
+    let mut view = args.view;
+    let mut session_token = args.session;
+    let mut cols = args.cols;
+    if view.is_none() && !args.single && zellij::inside_zellij() {
+        if args.new_tab {
+            match zellij::spawn_tab(&path) {
+                Ok(()) => return,
+                Err(e) => eprintln!("twig-tui: zellij split failed ({e}); running single window"),
+            }
+        } else {
+            let token = session::pid_token();
+            match zellij::split_current_tab(&path, &token) {
+                Ok(()) => {
+                    view = Some(View::Sidebar);
+                    session_token = Some(token);
+                    cols = Some(26);
+                }
+                Err(e) => {
+                    eprintln!("twig-tui: zellij split failed ({e}); running single window")
+                }
+            }
         }
     }
 
-    let view_mode = args.view.map(ViewMode::Single).unwrap_or(ViewMode::All);
+    let view_mode = view.map(ViewMode::Single).unwrap_or(ViewMode::All);
     let mut app = match TuiApp::with_view(&path, view_mode) {
         Ok(a) => a,
         Err(e) => {
@@ -74,7 +100,7 @@ fn main() {
         }
     };
     if let ViewMode::Single(view) = view_mode {
-        let token = args.session.unwrap_or_else(|| session::repo_token(&path));
+        let token = session_token.unwrap_or_else(|| session::repo_token(&path));
         let dir = session::session_dir(&token);
         let zellij_pane = std::env::var("ZELLIJ_PANE_ID").ok().filter(|v| !v.is_empty());
         match Session::join(&dir, view.name(), std::process::id(), &path, zellij_pane) {
@@ -95,7 +121,7 @@ fn main() {
     }
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, &mut app, &watch_rx, watcher.ok().as_ref());
+    let result = run(&mut terminal, &mut app, &watch_rx, watcher.ok().as_ref(), cols);
     ratatui::restore();
     let broadcast = app.quit_broadcast;
     if let Some(mut sess) = app.session.take() {
@@ -112,10 +138,40 @@ fn run(
     app: &mut TuiApp,
     watch_rx: &mpsc::Receiver<()>,
     watcher: Option<&WorktreeWatcher>,
+    cols: Option<u16>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     terminal.draw(|frame| ui::draw(frame, app))?;
 
+    struct Shrink {
+        target: u16,
+        deadline: std::time::Instant,
+        prev: Option<u16>,
+        step: u16,
+    }
+    let mut shrink = cols.map(|target| Shrink {
+        target,
+        deadline: std::time::Instant::now() + Duration::from_secs(5),
+        prev: None,
+        step: 0,
+    });
+
     loop {
+        if let Some(s) = shrink.as_mut() {
+            if std::time::Instant::now() >= s.deadline {
+                shrink = None;
+            } else if let Ok((w, _)) = ratatui::crossterm::terminal::size() {
+                if let Some(p) = s.prev
+                    && p > w
+                {
+                    s.step = p - w;
+                }
+                if w.saturating_sub(s.target) > s.step / 2 {
+                    zellij::resize_self_step();
+                    s.prev = Some(w);
+                }
+            }
+        }
+
         let mut keys: Vec<KeyEvent> = Vec::new();
         let mut dirty = false;
 
