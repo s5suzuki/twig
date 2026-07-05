@@ -309,6 +309,196 @@ fn diff_discard_selection_confirms_then_reverts_lines() {
     assert!(content.contains("line18v2\n"));
 }
 
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git runs");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[test]
+fn graph_create_branch_and_checkout_via_prompts() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+
+    app.handle_input(vec![key(KeyCode::Char('b'))]);
+    assert!(app.prompt.is_some(), "b opens branch name prompt");
+    type_text(&mut app, "dev");
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert_eq!(git_out(&dir, &["branch", "--list", "dev"]), "dev");
+
+    app.handle_input(vec![key(KeyCode::Char('o'))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "Checkout: 1) branch dev").is_some(),
+        "checkout prompt lists the non-head branch"
+    );
+    app.handle_input(vec![key(KeyCode::Char('1'))]);
+    assert_eq!(git_out(&dir, &["symbolic-ref", "HEAD"]), "refs/heads/dev");
+}
+
+#[test]
+fn graph_reset_soft_moves_head_and_keeps_index() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "first"]);
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "second"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    let target = app.graph.rows[1].id;
+
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT),
+    ]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "(s)oft / (m)ixed / (h)ard").is_some());
+
+    app.handle_input(vec![key(KeyCode::Char('s'))]);
+    assert_eq!(git_out(&dir, &["rev-parse", "HEAD"]), target.to_string());
+    assert_eq!(app.staged.len(), 1, "soft reset keeps the change staged");
+}
+
+#[test]
+fn graph_hard_reset_needs_second_confirmation() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "first"]);
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "second"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    let head = git_out(&dir, &["rev-parse", "HEAD"]);
+
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT),
+        key(KeyCode::Char('h')),
+    ]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "Hard reset discards").is_some());
+    app.handle_input(vec![key(KeyCode::Char('n'))]);
+    assert_eq!(git_out(&dir, &["rev-parse", "HEAD"]), head, "n keeps HEAD");
+
+    app.handle_input(vec![
+        KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT),
+        key(KeyCode::Char('h')),
+        key(KeyCode::Char('y')),
+    ]);
+    assert_ne!(git_out(&dir, &["rev-parse", "HEAD"]), head);
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one\n");
+}
+
+#[test]
+fn graph_cherry_pick_applies_commit_onto_head() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    git(&dir, &["checkout", "-qb", "feat"]);
+    std::fs::write(dir.join("f.txt"), "f\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "feat work"]);
+    git(&dir, &["checkout", "-q", "main"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    let feat_row = app
+        .graph
+        .rows
+        .iter()
+        .position(|r| r.summary == "feat work")
+        .expect("feat commit in graph");
+    for _ in 0..feat_row {
+        app.handle_input(vec![key(KeyCode::Char('j'))]);
+    }
+
+    app.handle_input(vec![key(KeyCode::Char('y'))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "Cherry-pick").is_some(), "confirm prompt");
+    app.handle_input(vec![key(KeyCode::Char('y'))]);
+
+    assert!(app.error.is_none(), "cherry-pick ok: {:?}", app.error);
+    assert!(dir.join("f.txt").exists(), "picked file in worktree");
+    assert_eq!(
+        git_out(&dir, &["log", "--format=%s", "-1"]),
+        "feat work",
+        "picked commit on top of main"
+    );
+    assert_eq!(git_out(&dir, &["symbolic-ref", "HEAD"]), "refs/heads/main");
+}
+
+#[test]
+fn graph_tag_create_delete_and_branch_rename() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+
+    app.handle_input(vec![key(KeyCode::Char('t'))]);
+    type_text(&mut app, "v1");
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert_eq!(git_out(&dir, &["tag", "-l", "v1"]), "v1");
+
+    app.handle_input(vec![key(KeyCode::Char('x'))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "Delete tag v1? (y/n)").is_some(),
+        "single deletable ref confirms directly"
+    );
+    app.handle_input(vec![key(KeyCode::Char('y'))]);
+    assert_eq!(git_out(&dir, &["tag", "-l", "v1"]), "");
+
+    app.handle_input(vec![key(KeyCode::Char('r'))]);
+    let (_, input) = app.prompt.as_ref().expect("rename prompt");
+    assert_eq!(input, "main", "prefilled with branch name");
+    for _ in 0..4 {
+        app.handle_input(vec![key(KeyCode::Backspace)]);
+    }
+    type_text(&mut app, "trunk");
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert_eq!(git_out(&dir, &["symbolic-ref", "HEAD"]), "refs/heads/trunk");
+}
+
+#[test]
+fn graph_interactive_rebase_requests_suspended_git() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "first"]);
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "second"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    let head = app.graph.rows[0].id;
+
+    app.handle_input(vec![key(KeyCode::Char('i'))]);
+    let argv = app.pending_shell.take().expect("i schedules git rebase -i");
+    assert_eq!(argv[0], "git");
+    assert_eq!(argv[3..5], ["rebase".to_string(), "-i".to_string()]);
+    assert_eq!(argv[5], format!("{head}^"));
+}
+
 #[test]
 fn graph_expands_commit_files_and_opens_per_file_diff() {
     let dir = temp_repo();

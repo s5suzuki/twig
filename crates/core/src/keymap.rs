@@ -293,6 +293,8 @@ pub enum Action {
     GraphRebaseOnto,
     GraphRebaseInteractive,
     GraphCheckout,
+    GraphRenameBranch,
+    GraphDeleteRef,
     GraphPush,
     GraphForcePush,
     GraphFetch,
@@ -570,6 +572,16 @@ impl Action {
             Action::GraphCheckout,
             "graph-checkout",
             "Check out the commit / branch",
+        ),
+        (
+            Action::GraphRenameBranch,
+            "graph-rename-branch",
+            "Rename a branch on the commit",
+        ),
+        (
+            Action::GraphDeleteRef,
+            "graph-delete-ref",
+            "Delete a branch/tag on the commit",
         ),
         (Action::GraphPush, "graph-push", "Push the current branch"),
         (
@@ -849,6 +861,8 @@ impl Keymap {
         km.push(Graph, shift, B, GraphRebaseOnto);
         km.push(Graph, n, I, GraphRebaseInteractive);
         km.push(Graph, n, O, GraphCheckout);
+        km.push(Graph, n, R, GraphRenameBranch);
+        km.push(Graph, n, X, GraphDeleteRef);
         km.push(Graph, n, P, GraphPush);
         km.push(Graph, shift, P, GraphForcePush);
         km.push(Graph, n, F, GraphFetch);

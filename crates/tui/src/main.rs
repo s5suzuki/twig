@@ -215,6 +215,10 @@ fn run(
         if let Some(text) = app.pending_copy.take() {
             clipboard::copy(&text)?;
         }
+        if let Some(argv) = app.pending_shell.take() {
+            run_suspended(terminal, app, &argv)?;
+            dirty = true;
+        }
         if let Some(file) = app.pending_editor.take() {
             open_editor(terminal, app, &file)?;
             dirty = true;
@@ -226,6 +230,29 @@ fn run(
             terminal.draw(|frame| ui::draw(frame, app))?;
         }
     }
+}
+
+fn run_suspended(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut TuiApp,
+    argv: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    use ratatui::crossterm::execute;
+    use ratatui::crossterm::terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    };
+
+    disable_raw_mode()?;
+    execute!(std::io::stdout(), LeaveAlternateScreen)?;
+    let status = std::process::Command::new(&argv[0]).args(&argv[1..]).status();
+    enable_raw_mode()?;
+    execute!(std::io::stdout(), EnterAlternateScreen)?;
+    terminal.clear()?;
+    match status {
+        Ok(_) => app.refresh(),
+        Err(e) => app.error = Some(format!("{} failed: {e}", argv[0])),
+    }
+    Ok(())
 }
 
 fn open_editor(

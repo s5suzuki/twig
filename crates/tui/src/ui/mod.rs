@@ -88,10 +88,11 @@ fn pane_block<'a>(app: &TuiApp, title: &'a str, focused: bool) -> Block<'a> {
     }
 }
 
-fn draw_sidebar(frame: &mut Frame, app: &TuiApp, area: Rect) {
+fn draw_sidebar(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let block = pane_block(app, "Repositories", app.focus == Pane::Sidebar);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    app.sidebar_view_rows = inner.height as usize;
 
     let rows = app.sidebar_rows();
     let mut lines: Vec<Line> = Vec::new();

@@ -71,6 +71,60 @@ fn fixed_focus(view: View) -> Pane {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GraphOp {
+    CherryPick,
+    Revert,
+    RebaseOnto,
+    CheckoutDetached,
+}
+
+impl GraphOp {
+    fn question(self, short: &str) -> String {
+        match self {
+            GraphOp::CherryPick => format!("Cherry-pick {short} onto HEAD? (y/n)"),
+            GraphOp::Revert => format!("Revert {short}? (y/n)"),
+            GraphOp::RebaseOnto => format!("Rebase current branch onto {short}? (y/n)"),
+            GraphOp::CheckoutDetached => format!("Check out {short} (detached HEAD)? (y/n)"),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RefTarget {
+    Branch(String),
+    RemoteBranch(String),
+    Tag(String),
+}
+
+impl RefTarget {
+    fn describe(&self) -> String {
+        match self {
+            RefTarget::Branch(n) => format!("branch {n}"),
+            RefTarget::RemoteBranch(n) => format!("remote {n}"),
+            RefTarget::Tag(n) => format!("tag {n}"),
+        }
+    }
+}
+
+fn short_oid(oid: &Oid) -> String {
+    let hex = oid.to_string();
+    hex[..7.min(hex.len())].to_string()
+}
+
+fn numbered(refs: &[RefTarget]) -> String {
+    refs.iter()
+        .enumerate()
+        .map(|(i, r)| format!("{}) {}", i + 1, r.describe()))
+        .collect::<Vec<_>>()
+        .join("  ")
+}
+
+fn pick<T: Clone>(items: &[T], c: char) -> Option<T> {
+    let idx = c.to_digit(10)? as usize;
+    (1..=items.len()).contains(&idx).then(|| items[idx - 1].clone())
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Prompt {
     Commit,
@@ -78,11 +132,38 @@ pub enum Prompt {
     ConfirmAmendPushed,
     ConfirmDiscardFiles { paths: Vec<String>, label: String },
     ConfirmDiscardLines { path: String, lo: usize, hi: usize },
+    CreateBranch { at: Oid },
+    RenameBranch { from: String },
+    CreateTag { at: Oid },
+    Reset { oid: Oid },
+    ConfirmResetHard { oid: Oid },
+    ConfirmOp { op: GraphOp, oid: Oid },
+    Checkout { oid: Oid, refs: Vec<RefTarget> },
+    DeleteRef { refs: Vec<RefTarget> },
+    ConfirmDeleteRef { target: RefTarget },
+    PickRenameBranch { names: Vec<String> },
 }
 
 impl Prompt {
     pub fn wants_text(&self) -> bool {
-        matches!(self, Prompt::Commit | Prompt::Amend)
+        matches!(
+            self,
+            Prompt::Commit
+                | Prompt::Amend
+                | Prompt::CreateBranch { .. }
+                | Prompt::RenameBranch { .. }
+                | Prompt::CreateTag { .. }
+        )
+    }
+
+    fn is_choice(&self) -> bool {
+        matches!(
+            self,
+            Prompt::Reset { .. }
+                | Prompt::Checkout { .. }
+                | Prompt::DeleteRef { .. }
+                | Prompt::PickRenameBranch { .. }
+        )
     }
 
     pub fn label(&self) -> String {
@@ -98,6 +179,33 @@ impl Prompt {
             Prompt::ConfirmDiscardLines { path, .. } => {
                 format!("Discard selected lines in {path}? (y/n)")
             }
+            Prompt::CreateBranch { at } => format!("Branch name at {}:", short_oid(at)),
+            Prompt::RenameBranch { from } => format!("Rename branch {from} to:"),
+            Prompt::CreateTag { at } => format!("Tag name at {}:", short_oid(at)),
+            Prompt::Reset { oid } => format!(
+                "Reset HEAD to {}: (s)oft / (m)ixed / (h)ard",
+                short_oid(oid)
+            ),
+            Prompt::ConfirmResetHard { .. } => {
+                "Hard reset discards working tree changes. Continue? (y/n)".to_string()
+            }
+            Prompt::ConfirmOp { op, oid } => op.question(&short_oid(oid)),
+            Prompt::Checkout { refs, .. } => {
+                format!("Checkout: {}  c) commit (detached)", numbered(refs))
+            }
+            Prompt::DeleteRef { refs } => format!("Delete: {}", numbered(refs)),
+            Prompt::ConfirmDeleteRef { target } => {
+                format!("Delete {}? (y/n)", target.describe())
+            }
+            Prompt::PickRenameBranch { names } => format!(
+                "Rename: {}",
+                names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| format!("{}) {n}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join("  ")
+            ),
         }
     }
 }
@@ -134,6 +242,7 @@ pub struct TuiApp {
     pub graph_limit: usize,
 
     pub sidebar_cursor: usize,
+    pub sidebar_view_rows: usize,
     pub changes_cursor: usize,
     pub changes_scroll: usize,
     pub changes_view_rows: usize,
@@ -157,6 +266,7 @@ pub struct TuiApp {
 
     pub prompt: Option<(Prompt, String)>,
     pub pending_editor: Option<PathBuf>,
+    pub pending_shell: Option<Vec<String>>,
     pub pending_copy: Option<String>,
     pub pending_focus_jump: bool,
 }
@@ -200,6 +310,7 @@ impl TuiApp {
             quit: false,
             graph_limit,
             sidebar_cursor: 0,
+            sidebar_view_rows: 20,
             changes_cursor: 0,
             changes_scroll: 0,
             changes_view_rows: 20,
@@ -220,6 +331,7 @@ impl TuiApp {
             graph_view_rows: 20,
             prompt: None,
             pending_editor: None,
+            pending_shell: None,
             pending_copy: None,
             pending_focus_jump: false,
         })
@@ -614,6 +726,12 @@ impl TuiApp {
         let Some((kind, input)) = self.prompt.as_mut() else {
             return;
         };
+        if ev.modifiers.contains(KeyModifiers::CONTROL) {
+            if ev.code == KeyCode::Char('c') {
+                self.prompt = None;
+            }
+            return;
+        }
         if kind.wants_text() {
             match ev.code {
                 KeyCode::Esc => self.prompt = None,
@@ -621,29 +739,65 @@ impl TuiApp {
                 KeyCode::Backspace => {
                     input.pop();
                 }
-                KeyCode::Char(c) => {
-                    if ev.modifiers.contains(KeyModifiers::CONTROL) {
-                        if c == 'c' {
-                            self.prompt = None;
-                        }
-                    } else {
-                        input.push(c);
-                    }
-                }
+                KeyCode::Char(c) => input.push(c),
+                _ => {}
+            }
+        } else if kind.is_choice() {
+            match ev.code {
+                KeyCode::Esc => self.prompt = None,
+                KeyCode::Char(c) => self.handle_choice(c),
                 _ => {}
             }
         } else {
             match ev.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => self.submit_prompt(),
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => self.prompt = None,
-                KeyCode::Char(c)
-                    if c == 'c' && ev.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    self.prompt = None
-                }
                 _ => {}
             }
         }
+    }
+
+    fn handle_choice(&mut self, c: char) {
+        let Some((kind, _)) = self.prompt.clone() else {
+            return;
+        };
+        match kind {
+            Prompt::Reset { oid } => match c {
+                's' => self.take_prompt_and(|app| app.run_reset(oid, repo::ResetMode::Soft)),
+                'm' => self.take_prompt_and(|app| app.run_reset(oid, repo::ResetMode::Mixed)),
+                'h' => self.prompt = Some((Prompt::ConfirmResetHard { oid }, String::new())),
+                _ => {}
+            },
+            Prompt::Checkout { oid, refs } => {
+                if c == 'c' {
+                    self.prompt = Some((
+                        Prompt::ConfirmOp {
+                            op: GraphOp::CheckoutDetached,
+                            oid,
+                        },
+                        String::new(),
+                    ));
+                } else if let Some(target) = pick(&refs, c) {
+                    self.take_prompt_and(|app| app.run_checkout_ref(&target));
+                }
+            }
+            Prompt::DeleteRef { refs } => {
+                if let Some(target) = pick(&refs, c) {
+                    self.prompt = Some((Prompt::ConfirmDeleteRef { target }, String::new()));
+                }
+            }
+            Prompt::PickRenameBranch { names } => {
+                if let Some(from) = pick(&names, c) {
+                    self.prompt = Some((Prompt::RenameBranch { from: from.clone() }, from));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn take_prompt_and(&mut self, f: impl FnOnce(&mut Self)) {
+        self.prompt = None;
+        f(self);
     }
 
     fn submit_prompt(&mut self) {
@@ -665,7 +819,112 @@ impl TuiApp {
             Prompt::ConfirmAmendPushed => self.run_amend(&input),
             Prompt::ConfirmDiscardFiles { paths, .. } => self.run_discard_files(&paths),
             Prompt::ConfirmDiscardLines { path, lo, hi } => self.run_discard_lines(&path, lo, hi),
+            Prompt::CreateBranch { at } => self.run_ref_op(|s, name| {
+                repo::create_branch(&s.selected, name, at)
+            }, &input),
+            Prompt::RenameBranch { from } => self.run_ref_op(|s, name| {
+                repo::rename_branch(&s.selected, &from, name)
+            }, &input),
+            Prompt::CreateTag { at } => self.run_ref_op(|s, name| {
+                repo::create_tag(&s.selected, name, at)
+            }, &input),
+            Prompt::ConfirmResetHard { oid } => self.run_reset(oid, repo::ResetMode::Hard),
+            Prompt::ConfirmOp { op, oid } => self.run_graph_op(op, oid),
+            Prompt::ConfirmDeleteRef { target } => self.run_delete_ref(&target),
+            Prompt::Reset { .. }
+            | Prompt::Checkout { .. }
+            | Prompt::DeleteRef { .. }
+            | Prompt::PickRenameBranch { .. } => {}
         }
+    }
+
+    fn run_ref_op(
+        &mut self,
+        f: impl FnOnce(&Self, &str) -> Result<(), twig_core::git2::Error>,
+        input: &str,
+    ) {
+        let name = input.trim();
+        if name.is_empty() {
+            return;
+        }
+        match f(self, name) {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("ref op failed: {e}")),
+        }
+        self.refresh();
+    }
+
+    fn run_reset(&mut self, oid: Oid, mode: repo::ResetMode) {
+        match repo::reset(&self.selected, oid, mode) {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("reset failed: {e}")),
+        }
+        self.refresh();
+    }
+
+    fn run_graph_op(&mut self, op: GraphOp, oid: Oid) {
+        match op {
+            GraphOp::CherryPick => {
+                let r = repo::cherry_pick(&self.selected, oid);
+                self.apply_seq_outcome("cherry-pick", r);
+            }
+            GraphOp::Revert => {
+                let r = repo::revert(&self.selected, oid);
+                self.apply_seq_outcome("revert", r);
+            }
+            GraphOp::RebaseOnto => {
+                let r = repo::rebase_onto(&self.selected, oid);
+                self.apply_seq_outcome("rebase", r);
+            }
+            GraphOp::CheckoutDetached => {
+                match repo::checkout_commit(&self.selected, oid) {
+                    Ok(()) => self.error = None,
+                    Err(e) => self.error = Some(format!("checkout failed: {e}")),
+                }
+                self.refresh();
+            }
+        }
+    }
+
+    fn apply_seq_outcome(
+        &mut self,
+        what: &str,
+        r: Result<repo::SeqOutcome, twig_core::git2::Error>,
+    ) {
+        match r {
+            Ok(repo::SeqOutcome::Done) => self.error = None,
+            Ok(repo::SeqOutcome::Conflicts(files)) => {
+                self.error = Some(format!("{what} stopped on conflicts: {}", files.join(", ")));
+            }
+            Err(e) => self.error = Some(format!("{what} failed: {e}")),
+        }
+        self.refresh();
+    }
+
+    fn run_checkout_ref(&mut self, target: &RefTarget) {
+        let res = match target {
+            RefTarget::Branch(name) => repo::checkout_branch(&self.selected, name),
+            RefTarget::RemoteBranch(name) => repo::checkout_tracking(&self.selected, name),
+            RefTarget::Tag(_) => return,
+        };
+        match res {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("checkout failed: {e}")),
+        }
+        self.refresh();
+    }
+
+    fn run_delete_ref(&mut self, target: &RefTarget) {
+        let res = match target {
+            RefTarget::Branch(name) => repo::delete_branch(&self.selected, name),
+            RefTarget::Tag(name) => repo::delete_tag(&self.selected, name),
+            RefTarget::RemoteBranch(_) => return,
+        };
+        match res {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("delete failed: {e}")),
+        }
+        self.refresh();
     }
 
     fn run_commit(&mut self, msg: &str) {
@@ -748,6 +1007,7 @@ impl TuiApp {
             return;
         }
         let last = rows.len() - 1;
+        let half = (self.sidebar_view_rows / 2).max(1);
         let actions = self
             .keymap
             .resolve(queue, Context::Sidebar, &mut self.pending_prefix, |_| true);
@@ -757,6 +1017,12 @@ impl TuiApp {
                 Action::SidebarUp => self.sidebar_cursor = self.sidebar_cursor.saturating_sub(1),
                 Action::SidebarTop => self.sidebar_cursor = 0,
                 Action::SidebarBottom => self.sidebar_cursor = last,
+                Action::SidebarHalfPageDown => {
+                    self.sidebar_cursor = (self.sidebar_cursor + half).min(last)
+                }
+                Action::SidebarHalfPageUp => {
+                    self.sidebar_cursor = self.sidebar_cursor.saturating_sub(half)
+                }
                 Action::SidebarSelect | Action::SidebarExpand => {
                     let row = &rows[self.sidebar_cursor.min(last)];
                     if row.initialized {
@@ -996,6 +1262,17 @@ impl TuiApp {
                         | Action::GraphHalfPageUp
                         | Action::GraphOpen
                         | Action::GraphCollapse
+                        | Action::GraphEditor
+                        | Action::GraphReset
+                        | Action::GraphCreateBranch
+                        | Action::GraphCreateTag
+                        | Action::GraphCherryPick
+                        | Action::GraphRevert
+                        | Action::GraphRebaseOnto
+                        | Action::GraphRebaseInteractive
+                        | Action::GraphCheckout
+                        | Action::GraphRenameBranch
+                        | Action::GraphDeleteRef
                 )
             });
         for a in actions {
@@ -1013,9 +1290,163 @@ impl TuiApp {
                 }
                 Action::GraphOpen => self.graph_open(),
                 Action::GraphCollapse => self.graph_collapse(),
+                Action::GraphEditor => self.graph_open_editor(),
+                Action::GraphReset => self.graph_op_prompt(a),
+                Action::GraphCreateBranch => self.graph_op_prompt(a),
+                Action::GraphCreateTag => self.graph_op_prompt(a),
+                Action::GraphCherryPick => self.graph_op_prompt(a),
+                Action::GraphRevert => self.graph_op_prompt(a),
+                Action::GraphRebaseOnto => self.graph_op_prompt(a),
+                Action::GraphCheckout => self.graph_op_prompt(a),
+                Action::GraphRenameBranch => self.graph_op_prompt(a),
+                Action::GraphDeleteRef => self.graph_op_prompt(a),
+                Action::GraphRebaseInteractive => self.interactive_rebase(),
                 _ => {}
             }
         }
+    }
+
+    fn graph_target(&self) -> Option<(usize, Oid)> {
+        let items = self.graph_items();
+        let cursor = self.graph_cursor.min(items.len().checked_sub(1)?);
+        let row = match items.get(cursor)? {
+            GraphItem::Commit(r) => *r,
+            GraphItem::File(_) => (0..cursor).rev().find_map(|i| match items[i] {
+                GraphItem::Commit(r) => Some(r),
+                _ => None,
+            })?,
+        };
+        let gr = &self.graph.rows[row];
+        (!gr.is_uncommitted).then_some((row, gr.id))
+    }
+
+    fn row_refs(&self, row: usize) -> Vec<RefTarget> {
+        use twig_core::repo::RefKind;
+        self.graph.rows[row]
+            .refs
+            .iter()
+            .filter_map(|r| match r.kind {
+                RefKind::LocalBranch if !r.is_head => Some(RefTarget::Branch(r.name.clone())),
+                RefKind::RemoteBranch => Some(RefTarget::RemoteBranch(r.name.clone())),
+                RefKind::Tag => Some(RefTarget::Tag(r.name.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn busy_with_seq(&mut self) -> bool {
+        if repo::seq_state(&self.selected) != repo::SeqState::None {
+            self.error = Some("finish or abort the in-progress operation first".to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    fn graph_op_prompt(&mut self, action: Action) {
+        let Some((row, oid)) = self.graph_target() else {
+            return;
+        };
+        if self.busy_with_seq() {
+            return;
+        }
+        let confirm_op = |op| (Prompt::ConfirmOp { op, oid }, String::new());
+        self.prompt = Some(match action {
+            Action::GraphReset => (Prompt::Reset { oid }, String::new()),
+            Action::GraphCreateBranch => (Prompt::CreateBranch { at: oid }, String::new()),
+            Action::GraphCreateTag => (Prompt::CreateTag { at: oid }, String::new()),
+            Action::GraphCherryPick => confirm_op(GraphOp::CherryPick),
+            Action::GraphRevert => confirm_op(GraphOp::Revert),
+            Action::GraphRebaseOnto => confirm_op(GraphOp::RebaseOnto),
+            Action::GraphCheckout => {
+                let refs: Vec<RefTarget> = self
+                    .row_refs(row)
+                    .into_iter()
+                    .filter(|r| !matches!(r, RefTarget::Tag(_)))
+                    .collect();
+                if refs.is_empty() {
+                    confirm_op(GraphOp::CheckoutDetached)
+                } else {
+                    (Prompt::Checkout { oid, refs }, String::new())
+                }
+            }
+            Action::GraphRenameBranch => {
+                use twig_core::repo::RefKind;
+                let names: Vec<String> = self.graph.rows[row]
+                    .refs
+                    .iter()
+                    .filter(|r| r.kind == RefKind::LocalBranch)
+                    .map(|r| r.name.clone())
+                    .collect();
+                match names.len() {
+                    0 => {
+                        self.error = Some("no local branch on this commit".to_string());
+                        return;
+                    }
+                    1 => {
+                        let from = names[0].clone();
+                        (Prompt::RenameBranch { from: from.clone() }, from)
+                    }
+                    _ => (Prompt::PickRenameBranch { names }, String::new()),
+                }
+            }
+            Action::GraphDeleteRef => {
+                let refs: Vec<RefTarget> = self
+                    .row_refs(row)
+                    .into_iter()
+                    .filter(|r| !matches!(r, RefTarget::RemoteBranch(_)))
+                    .collect();
+                match refs.len() {
+                    0 => {
+                        self.error = Some("no branch/tag on this commit".to_string());
+                        return;
+                    }
+                    1 => (
+                        Prompt::ConfirmDeleteRef {
+                            target: refs[0].clone(),
+                        },
+                        String::new(),
+                    ),
+                    _ => (Prompt::DeleteRef { refs }, String::new()),
+                }
+            }
+            _ => return,
+        });
+    }
+
+    fn graph_open_editor(&mut self) {
+        let items = self.graph_items();
+        if let Some(GraphItem::File(k)) =
+            items.get(self.graph_cursor.min(items.len().saturating_sub(1)))
+            && let Some(f) = self.commit_files.get(*k)
+        {
+            self.pending_editor = Some(self.selected.join(&f.path));
+        }
+    }
+
+    fn interactive_rebase(&mut self) {
+        let Some((_, oid)) = self.graph_target() else {
+            return;
+        };
+        if self.busy_with_seq() {
+            return;
+        }
+        let base = match repo::commit_parent_count(&self.selected, oid) {
+            Ok(0) => "--root".to_string(),
+            Ok(_) => format!("{oid}^"),
+            Err(e) => {
+                self.error = Some(format!("rebase failed: {e}"));
+                return;
+            }
+        };
+        self.pending_shell = Some(vec![
+            "git".to_string(),
+            "-C".to_string(),
+            self.selected.to_string_lossy().into_owned(),
+            "rebase".to_string(),
+            "-i".to_string(),
+            base,
+        ]);
     }
 
     fn graph_open(&mut self) {
