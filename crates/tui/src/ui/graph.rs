@@ -24,7 +24,8 @@ fn lane_color(idx: usize) -> Color {
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let h = area.height as usize;
-    app.graph_view_rows = h;
+    let visible = h.div_ceil(2).max(1);
+    app.graph_view_rows = visible;
     if app.graph.rows.is_empty() || h == 0 {
         return;
     }
@@ -33,18 +34,45 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     if cursor < app.graph_scroll {
         app.graph_scroll = cursor;
     }
-    if cursor >= app.graph_scroll + h {
-        app.graph_scroll = cursor + 1 - h;
+    if cursor >= app.graph_scroll + visible {
+        app.graph_scroll = cursor + 1 - visible;
     }
 
-    let end = (app.graph_scroll + h).min(app.graph.rows.len());
+    let end = (app.graph_scroll + visible).min(app.graph.rows.len());
     let mut lines: Vec<Line> = Vec::new();
     for i in app.graph_scroll..end {
         let row = &app.graph.rows[i];
         let focused = app.focus == Pane::RightTab && i == cursor;
         lines.push(render_row(row, app.graph.max_col, focused));
+        if i + 1 < app.graph.rows.len() {
+            lines.push(connector_row(row, app.graph.max_col));
+        }
     }
+    lines.truncate(h);
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn connector_row(row: &GraphRow, max_col: usize) -> Line<'static> {
+    let mut cont: Vec<Option<usize>> = vec![None; max_col + 1];
+    for seg in &row.segments {
+        match *seg {
+            Segment::Through { col, color } | Segment::NodeToBottom { col, color } => {
+                cont[col] = Some(color)
+            }
+            Segment::TopToNode { .. } => {}
+        }
+    }
+    let mut spans: Vec<Span> = Vec::new();
+    for (col, color) in cont.iter().enumerate() {
+        match color {
+            Some(c) => spans.push(Span::styled("│", Style::default().fg(lane_color(*c)))),
+            None => spans.push(Span::raw(" ")),
+        }
+        if col < max_col {
+            spans.push(Span::raw(" "));
+        }
+    }
+    Line::from(spans)
 }
 
 fn render_row(row: &GraphRow, max_col: usize, cursor: bool) -> Line<'static> {
