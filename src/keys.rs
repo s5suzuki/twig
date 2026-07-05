@@ -69,6 +69,7 @@ pub enum Action {
     DiffPageDown,
     DiffPageUp,
     DiffEditor,
+    DiffCopySelection,
 
     ChangesTop,
     ChangesBottom,
@@ -218,6 +219,11 @@ impl Action {
             Action::DiffEditor,
             "diff-editor",
             "Open the current file in the editor",
+        ),
+        (
+            Action::DiffCopySelection,
+            "diff-copy-selection",
+            "Copy the selected lines to the clipboard",
         ),
         (Action::ChangesTop, "changes-top", "Move cursor to the top"),
         (
@@ -596,6 +602,7 @@ impl Keymap {
         km.push(Diff, ctrl, F, DiffPageDown);
         km.push(Diff, ctrl, B, DiffPageUp);
         km.push(Diff, n, E, DiffEditor);
+        km.push(Diff, n, Y, DiffCopySelection);
 
         km.push_seq(Changes, Chord::new(n, G), Chord::new(n, G), ChangesTop);
         km.push(Changes, shift, G, ChangesBottom);

@@ -1042,6 +1042,20 @@ impl App {
         })
     }
 
+    pub fn diff_selection_text(&self) -> Option<String> {
+        let (lo, hi) = self.diff_action_range()?;
+        let mut out = String::new();
+        for row in self.diff.rows[lo..=hi].iter() {
+            let DiffRow::Line { left, right, .. } = row else {
+                continue;
+            };
+            let text = right.as_deref().or(left.as_deref()).unwrap_or("");
+            out.push_str(text);
+            out.push('\n');
+        }
+        if out.is_empty() { None } else { Some(out) }
+    }
+
     pub fn apply_line_selection(&mut self) {
         if self.diff.rename {
             return;

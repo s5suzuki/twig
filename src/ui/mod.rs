@@ -1540,6 +1540,16 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
     let staged = app.selected_file.as_ref().map(|(_, s)| *s).unwrap_or(false);
     let conflict = app.diff.conflict;
 
+    let copy_event = ui.input_mut(|i| {
+        let had = i.events.iter().any(|e| matches!(e, egui::Event::Copy));
+        i.events.retain(|e| !matches!(e, egui::Event::Copy));
+        had
+    });
+    if copy_event && let Some(text) = app.diff_selection_text() {
+        ui.ctx().copy_text(text);
+        app.diff_anchor = None;
+    }
+
     let actions = app
         .keymap
         .poll(ui, Context::Diff, &mut app.pending_prefix, |_| true);
@@ -1576,6 +1586,12 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
             Action::DiffEditor => {
                 if let Some((path, _)) = app.selected_file.clone() {
                     app.open_in_editor(&path);
+                }
+            }
+            Action::DiffCopySelection => {
+                if let Some(text) = app.diff_selection_text() {
+                    ui.ctx().copy_text(text);
+                    app.diff_anchor = None;
                 }
             }
             _ => {}
