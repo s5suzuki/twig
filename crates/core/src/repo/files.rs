@@ -124,11 +124,23 @@ mod tests {
 
     #[test]
     fn walk_skips_git_and_gitignored_keeps_dotfiles() {
-        let top = list_files(Path::new("."), &[]);
+        let tmp = std::env::temp_dir().join(format!("twig-files-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join(".git")).unwrap();
+        std::fs::create_dir_all(tmp.join("src")).unwrap();
+        std::fs::create_dir_all(tmp.join("target")).unwrap();
+        std::fs::write(tmp.join(".gitignore"), "target/\n").unwrap();
+        std::fs::write(tmp.join("src/main.rs"), "").unwrap();
+        std::fs::write(tmp.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(tmp.join("target/out.o"), "").unwrap();
+
+        let top = list_files(&tmp, &[]);
         let names: Vec<&str> = top.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&".gitignore"), "dotfiles must show: {names:?}");
         assert!(names.contains(&"src"));
         assert!(!names.contains(&".git"), "the .git dir must be pruned");
         assert!(!names.contains(&"target"), ".gitignore must be respected");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

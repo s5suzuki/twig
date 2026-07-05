@@ -7,10 +7,10 @@ use std::thread;
 
 use git2::Oid;
 
-use crate::config::Config;
+use twig_core::config::Config;
 use crate::keys::{Chord, Keymap};
-use crate::repo::{self, DiffMode, DiffRow, FileDiff, Graph, LineKind, RepoNode, StatusEntry};
-use crate::search;
+use twig_core::repo::{self, DiffMode, DiffRow, FileDiff, Graph, LineKind, RepoNode, StatusEntry};
+use twig_core::search;
 
 pub const LIST_PAGE: usize = 10;
 const NAV_HISTORY_MAX: usize = 100;
@@ -296,7 +296,7 @@ pub struct App {
     pub selected_commit_file: Option<String>,
     pub commit_folds: HashSet<String>,
     pub diff: FileDiff,
-    pub diff_hl: crate::highlight::DiffHighlighter,
+    pub diff_hl: twig_core::highlight::DiffHighlighter,
     pub diff_galleys: crate::ui::diff_view::DiffGalleyCache,
     diff_ver: u64,
     diff_sig: u64,
@@ -363,7 +363,7 @@ pub struct App {
     remote_task: Option<Receiver<RemoteMsg>>,
 
     watch_root: PathBuf,
-    watcher: Option<crate::watch::WorktreeWatcher>,
+    watcher: Option<twig_core::watch::WorktreeWatcher>,
     watcher_started: bool,
 
     repaint_gate: Arc<AtomicBool>,
@@ -398,7 +398,7 @@ impl App {
             selected_commit_file: None,
             commit_folds: HashSet::new(),
             diff: empty_diff(),
-            diff_hl: crate::highlight::DiffHighlighter::default(),
+            diff_hl: twig_core::highlight::DiffHighlighter::default(),
             diff_galleys: crate::ui::diff_view::DiffGalleyCache::default(),
             diff_ver: 0,
             diff_sig: 0,
@@ -475,7 +475,7 @@ impl App {
     }
 
     pub fn apply_config(&self, ctx: &egui::Context) {
-        ctx.set_zoom_factor(self.config.font_size / crate::config::BASE_FONT_SIZE);
+        ctx.set_zoom_factor(self.config.font_size / twig_core::config::BASE_FONT_SIZE);
         ctx.set_visuals(crate::theme::visuals(&self.config));
     }
 
@@ -507,12 +507,12 @@ impl App {
         self.watcher_started = true;
         let ctx = ctx.clone();
         let gate = self.repaint_gate();
-        let notifier: crate::watch::Notifier = Arc::new(move || {
+        let notifier: twig_core::watch::Notifier = Arc::new(move || {
             if gate.load(Ordering::Relaxed) {
                 ctx.request_repaint();
             }
         });
-        match crate::watch::WorktreeWatcher::new(&self.watch_root, notifier) {
+        match twig_core::watch::WorktreeWatcher::new(&self.watch_root, notifier) {
             Ok(w) => self.watcher = Some(w),
             Err(e) => self.error = Some(e),
         }
@@ -659,9 +659,9 @@ impl App {
         self.diff_hl_sig = Some(sig);
         self.diff_hl = match self.diff_path() {
             Some(path) if !self.diff.rows.is_empty() => {
-                crate::highlight::DiffHighlighter::new(&path, &self.diff.rows, dark)
+                twig_core::highlight::DiffHighlighter::new(&path, &self.diff.rows, dark)
             }
-            _ => crate::highlight::DiffHighlighter::default(),
+            _ => twig_core::highlight::DiffHighlighter::default(),
         };
     }
 
@@ -1523,7 +1523,7 @@ impl App {
         self.active_tab = Tab::Editor;
         self.focus = Pane::RightTab;
         if self.term.is_some() && self.nvim_socket.exists() {
-            if let Err(e) = crate::editor::open_abs_in_server(&abs, &self.nvim_socket) {
+            if let Err(e) = twig_core::editor::open_abs_in_server(&abs, &self.nvim_socket) {
                 self.error = Some(e);
             }
         } else {
@@ -1538,7 +1538,7 @@ impl App {
         if self.term.is_none() || !self.nvim_socket.exists() {
             return true;
         }
-        if let Err(e) = crate::editor::open_abs_in_server(&abs, &self.nvim_socket) {
+        if let Err(e) = twig_core::editor::open_abs_in_server(&abs, &self.nvim_socket) {
             self.error = Some(e);
         }
         self.pending_open = None;

@@ -1,0 +1,21 @@
+[package]
+name = "twig-git-client"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "twig"
+path = "src/main.rs"
+
+[dependencies]
+twig-core = { path = "../core", default-features = false }
+alacritty_terminal = "0.26.0"
+eframe = "0.35.0"
+egui = "0.35"
+git2 = { version = "0.21.0", features = ["ssh", "https"] }
+portable-pty = "0.9.0"
+regex = "1.12.4"
+
+[features]
+default = ["syntax-highlight"]
+syntax-highlight = ["twig-core/syntax-highlight"]

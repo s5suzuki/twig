@@ -1,18 +1,13 @@
 mod app;
-mod color;
-mod config;
-mod editor;
 mod fonts;
-mod highlight;
 mod keys;
-mod repo;
-mod search;
 mod term;
 mod theme;
 mod ui;
-mod watch;
 
 use std::path::PathBuf;
+
+use twig_core::{config, editor, highlight, repo, search};
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();

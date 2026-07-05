@@ -6,8 +6,8 @@ mod sidebar;
 use std::collections::BTreeMap;
 
 use crate::app::{App, DiscardReq, Dir, Pane, Tab};
-use crate::config::{Accent, Theme};
-use crate::repo::{StatusEntry, StatusKind};
+use twig_core::config::{Accent, Theme};
+use twig_core::repo::{StatusEntry, StatusKind};
 
 const BTN_W: f32 = 22.0;
 const MARKER_W: f32 = 16.0;
@@ -863,7 +863,7 @@ fn search_confirm_modal(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn reset_modal(app: &mut App, ui: &mut egui::Ui) {
-    use crate::repo::ResetMode;
+    use twig_core::repo::ResetMode;
     let Some(oid) = app.reset_prompt else {
         return;
     };
@@ -968,8 +968,8 @@ fn force_push_modal(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let ctx = ui.ctx().clone();
-    let remote = crate::repo::primary_remote(&app.selected).unwrap_or_else(|| "origin".to_string());
-    let branch = crate::repo::head_push_refspec(&app.selected)
+    let remote = twig_core::repo::primary_remote(&app.selected).unwrap_or_else(|| "origin".to_string());
+    let branch = twig_core::repo::head_push_refspec(&app.selected)
         .and_then(|r| r.split(':').next().map(str::to_string))
         .map(|r| r.trim_start_matches("refs/heads/").to_string())
         .unwrap_or_default();
@@ -1102,7 +1102,7 @@ fn draw_settings(app: &mut App, ctx: &egui::Context) {
     if !app.settings_open {
         return;
     }
-    use crate::config::{Accent, Theme};
+    use twig_core::config::{Accent, Theme};
     let mut open = app.settings_open;
     let mut apply = false;
     let mut fonts = false;

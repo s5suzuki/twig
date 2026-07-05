@@ -4,7 +4,7 @@ use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, UiBuilder, 
 use git2::Oid;
 
 use crate::app::GraphMenu;
-use crate::repo::{
+use twig_core::repo::{
     CommitFile, CommitRowKind, Graph, RefKind, RefLabel, Segment, StatusKind, commit_file_rows,
 };
 
@@ -448,7 +448,7 @@ pub fn draw(
 
 fn build_menu_entries(
     oid: Oid,
-    row: Option<&crate::repo::GraphRow>,
+    row: Option<&twig_core::repo::GraphRow>,
 ) -> (String, Vec<(String, GraphAction)>) {
     if let Some(stash) = row.and_then(|r| r.refs.iter().find(|x| x.kind == RefKind::Stash))
         && let Some(idx) = parse_stash_index(&stash.name)

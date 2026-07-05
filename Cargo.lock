@@ -3718,6 +3718,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
+name = "twig-core"
+version = "0.1.0"
+dependencies = [
+ "git2",
+ "ignore",
+ "notify-debouncer-mini",
+ "regex",
+ "serde",
+ "syntect",
+ "toml",
+ "two-face",
+]
+
+[[package]]
 name = "twig-git-client"
 version = "0.1.0"
 dependencies = [
@@ -3725,14 +3739,9 @@ dependencies = [
  "eframe",
  "egui",
  "git2",
- "ignore",
- "notify-debouncer-mini",
  "portable-pty",
  "regex",
- "serde",
- "syntect",
- "toml",
- "two-face",
+ "twig-core",
 ]
 
 [[package]]
