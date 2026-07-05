@@ -47,22 +47,15 @@ fn draw_single(frame: &mut Frame, app: &mut TuiApp, view: View) {
         View::Sidebar => draw_sidebar(frame, app, area),
         View::Changes => draw_changes(frame, app, area),
         View::Main => draw_right(frame, app, area),
-        View::Graph => {
-            let block = pane_block("Graph", true);
-            let inner = block.inner(area);
-            frame.render_widget(block, area);
-            graph::draw(frame, app, inner);
-        }
-        View::Diff => {
-            let block = pane_block("Diff", true);
-            let inner = block.inner(area);
-            frame.render_widget(block, area);
-            diff::draw(frame, app, inner);
-        }
+        View::Graph => graph::draw(frame, app, area),
+        View::Diff => diff::draw(frame, app, area),
     }
 }
 
-fn pane_block(title: &str, focused: bool) -> Block<'_> {
+fn pane_block<'a>(app: &TuiApp, title: &'a str, focused: bool) -> Block<'a> {
+    if matches!(app.view_mode, ViewMode::Single(_)) {
+        return Block::new();
+    }
     let block = Block::bordered().title(title);
     if focused {
         block.border_style(Style::default().fg(FOCUS_FG))
@@ -72,7 +65,7 @@ fn pane_block(title: &str, focused: bool) -> Block<'_> {
 }
 
 fn draw_sidebar(frame: &mut Frame, app: &TuiApp, area: Rect) {
-    let block = pane_block("Repositories", app.focus == Pane::Sidebar);
+    let block = pane_block(app, "Repositories", app.focus == Pane::Sidebar);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -94,7 +87,7 @@ fn draw_sidebar(frame: &mut Frame, app: &TuiApp, area: Rect) {
 }
 
 fn draw_changes(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
-    let block = pane_block("Changes", app.focus == Pane::Changes);
+    let block = pane_block(app, "Changes", app.focus == Pane::Changes);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -208,7 +201,7 @@ fn draw_change_list(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
 }
 
 fn draw_right(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
-    let block = pane_block("", app.focus == Pane::RightTab);
+    let block = pane_block(app, "", app.focus == Pane::RightTab);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

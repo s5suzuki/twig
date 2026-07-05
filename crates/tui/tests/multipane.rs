@@ -102,6 +102,19 @@ fn single_changes_view_renders_full_frame() {
         !lines.iter().any(|l| l.contains("Graph")),
         "right pane must not render in changes view"
     );
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.contains(['┌', '┐', '└', '┘', '│', '─'])),
+        "single view draws no borders (zellij frames the pane)"
+    );
+
+    let mut all = TuiApp::new(&dir).unwrap();
+    let lines = screen(&mut all, 120, 20);
+    assert!(
+        lines.iter().any(|l| l.contains('┌')),
+        "combined view keeps its own borders"
+    );
 }
 
 #[test]

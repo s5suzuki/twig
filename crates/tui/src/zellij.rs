@@ -13,15 +13,15 @@ pub fn layout_kdl(exe: &str, repo: &str, token: &str) -> String {
     format!(
         r#"layout {{
     pane split_direction="vertical" {{
-        pane size=26 command="{e}" {{
+        pane size=26 command="{e}" name="repositories" {{
             args "--view" "sidebar" "--session" "{t}" "{r}"
             close_on_exit true
         }}
-        pane size=36 command="{e}" {{
+        pane size=36 command="{e}" name="changes" {{
             args "--view" "changes" "--session" "{t}" "{r}"
             close_on_exit true
         }}
-        pane command="{e}" {{
+        pane command="{e}" name="graph | diff" {{
             args "--view" "main" "--session" "{t}" "{r}"
             close_on_exit true
         }}
@@ -97,15 +97,15 @@ mod tests {
             kdl,
             r#"layout {
     pane split_direction="vertical" {
-        pane size=26 command="/usr/bin/twig-tui" {
+        pane size=26 command="/usr/bin/twig-tui" name="repositories" {
             args "--view" "sidebar" "--session" "p123" "/home/u/repo"
             close_on_exit true
         }
-        pane size=36 command="/usr/bin/twig-tui" {
+        pane size=36 command="/usr/bin/twig-tui" name="changes" {
             args "--view" "changes" "--session" "p123" "/home/u/repo"
             close_on_exit true
         }
-        pane command="/usr/bin/twig-tui" {
+        pane command="/usr/bin/twig-tui" name="graph | diff" {
             args "--view" "main" "--session" "p123" "/home/u/repo"
             close_on_exit true
         }
