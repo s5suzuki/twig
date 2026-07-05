@@ -179,6 +179,7 @@ pub enum Prompt {
     StashOp { index: usize },
     ConfirmStashDrop { index: usize },
     DiffFind,
+    EditGraphLimit,
     SearchQuery,
     SearchReplace,
     ConfirmSearchReplace { replacement: String },
@@ -195,6 +196,7 @@ impl Prompt {
                 | Prompt::RenameBranch { .. }
                 | Prompt::CreateTag { .. }
                 | Prompt::DiffFind
+                | Prompt::EditGraphLimit
                 | Prompt::SearchQuery
                 | Prompt::SearchReplace
         )
@@ -262,6 +264,7 @@ impl Prompt {
                 format!("Drop stash@{{{index}}}? (y/n)")
             }
             Prompt::DiffFind => "Find in diff:".to_string(),
+            Prompt::EditGraphLimit => "Graph commit limit:".to_string(),
             Prompt::SearchQuery => "Search repository:".to_string(),
             Prompt::SearchReplace => "Replace matches with:".to_string(),
             Prompt::ConfirmSearchReplace { replacement } => {
@@ -431,7 +434,7 @@ pub struct TuiApp {
     pub error: Option<String>,
     pub quit: bool,
 
-    pub graph_limit: usize,
+    pub config: Config,
 
     pub sidebar_cursor: usize,
     pub sidebar_view_rows: usize,
@@ -467,6 +470,8 @@ pub struct TuiApp {
     pub search: SearchState,
     pub help_open: bool,
     pub help_scroll: usize,
+    pub settings_open: bool,
+    pub settings_cursor: usize,
     diff_recheck: u8,
     diff_recheck_at: Option<std::time::Instant>,
     pub pending_copy: Option<String>,
@@ -490,8 +495,7 @@ impl TuiApp {
         let config = Config::load();
         let root = repo::discover(path).map_err(|e| e.to_string())?;
         let (staged, unstaged) = repo::load_status(path).map_err(|e| e.to_string())?;
-        let graph_limit = config.graph_commit_limit;
-        let graph = repo::build_graph(path, graph_limit).map_err(|e| e.to_string())?;
+        let graph = repo::build_graph(path, config.graph_commit_limit).map_err(|e| e.to_string())?;
         let mut app = Self {
             root,
             selected: path.to_path_buf(),
@@ -512,7 +516,7 @@ impl TuiApp {
             pending_prefix: None,
             error: None,
             quit: false,
-            graph_limit,
+            config,
             sidebar_cursor: 0,
             sidebar_view_rows: 20,
             changes_cursor: 0,
@@ -544,6 +548,8 @@ impl TuiApp {
             search: SearchState::default(),
             help_open: false,
             help_scroll: 0,
+            settings_open: false,
+            settings_cursor: 0,
             diff_recheck: 0,
             diff_recheck_at: None,
             pending_copy: None,
@@ -571,7 +577,7 @@ impl TuiApp {
             }
             Err(e) => self.error = Some(format!("status failed: {e}")),
         }
-        match repo::build_graph(&self.selected, self.graph_limit) {
+        match repo::build_graph(&self.selected, self.config.graph_commit_limit) {
             Ok(g) => {
                 self.graph = g;
                 self.graph_cursor = self.graph_cursor.min(self.graph_last());
@@ -803,14 +809,80 @@ impl TuiApp {
                 self.handle_help_key(ev);
                 continue;
             }
+            if self.settings_open {
+                self.handle_settings_key(ev);
+                continue;
+            }
             if ev.kind != KeyEventKind::Release && ev.code == KeyCode::Char('?') {
                 self.help_open = true;
                 self.help_scroll = 0;
                 continue;
             }
+            if ev.kind != KeyEventKind::Release && ev.code == KeyCode::Char(',') {
+                self.settings_open = true;
+                self.settings_cursor = 0;
+                continue;
+            }
             if let Some(nk) = keys::normalize(&ev) {
                 self.handle_key(nk);
             }
+        }
+    }
+
+    pub fn settings_rows(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "graph_commit_limit",
+                self.config.graph_commit_limit.to_string(),
+            ),
+            (
+                "graph_show_author",
+                self.config.graph_show_author.to_string(),
+            ),
+            ("graph_show_date", self.config.graph_show_date.to_string()),
+            ("confirm_discard", self.config.confirm_discard.to_string()),
+        ]
+    }
+
+    fn handle_settings_key(&mut self, ev: KeyEvent) {
+        if ev.kind == KeyEventKind::Release {
+            return;
+        }
+        let last = self.settings_rows().len() - 1;
+        match ev.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => self.settings_open = false,
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.settings_cursor = (self.settings_cursor + 1).min(last)
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.settings_cursor = self.settings_cursor.saturating_sub(1)
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => self.activate_setting(),
+            _ => {}
+        }
+    }
+
+    fn activate_setting(&mut self) {
+        match self.settings_cursor {
+            0 => {
+                self.prompt = Some((
+                    Prompt::EditGraphLimit,
+                    self.config.graph_commit_limit.to_string(),
+                ));
+            }
+            1 => {
+                self.config.graph_show_author = !self.config.graph_show_author;
+                self.config.save();
+            }
+            2 => {
+                self.config.graph_show_date = !self.config.graph_show_date;
+                self.config.save();
+            }
+            3 => {
+                self.config.confirm_discard = !self.config.confirm_discard;
+                self.config.save();
+            }
+            _ => {}
         }
     }
 
@@ -1182,6 +1254,14 @@ impl TuiApp {
                     }
                 }
             }
+            Prompt::EditGraphLimit => match input.trim().parse::<usize>() {
+                Ok(n) if n > 0 => {
+                    self.config.graph_commit_limit = n;
+                    self.config.save();
+                    self.refresh();
+                }
+                _ => self.error = Some(format!("invalid commit limit: {}", input.trim())),
+            },
             Prompt::SearchQuery => self.run_search(input.trim()),
             Prompt::SearchReplace => {
                 self.prompt = Some((
@@ -1790,6 +1870,10 @@ impl TuiApp {
                 {
                     paths.push(old);
                 }
+                if !self.config.confirm_discard {
+                    self.run_discard_files(&paths);
+                    return;
+                }
                 self.prompt = Some((
                     Prompt::ConfirmDiscardFiles { paths, label: path },
                     String::new(),
@@ -1817,7 +1901,11 @@ impl TuiApp {
             .iter()
             .filter(|e| files.contains(&e.path))
             .flat_map(|e| std::iter::once(e.path.clone()).chain(e.old_path.clone()))
-            .collect();
+            .collect::<Vec<_>>();
+        if !self.config.confirm_discard {
+            self.run_discard_files(&paths);
+            return;
+        }
         self.prompt = Some((
             Prompt::ConfirmDiscardFiles { paths, label },
             String::new(),
@@ -1975,6 +2063,10 @@ impl TuiApp {
         let Some((lo, hi)) = self.diff_nav.action_range(&self.diff.rows) else {
             return;
         };
+        if !self.config.confirm_discard {
+            self.run_discard_lines(&path, lo, hi);
+            return;
+        }
         self.prompt = Some((Prompt::ConfirmDiscardLines { path, lo, hi }, String::new()));
     }
 

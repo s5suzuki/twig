@@ -49,7 +49,13 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
         let commit_row = match item {
             GraphItem::Commit(r) => {
                 let row = &app.graph.rows[*r];
-                lines.push(render_row(row, app.graph.max_col, focused));
+                lines.push(render_row(
+                    row,
+                    app.graph.max_col,
+                    focused,
+                    app.config.graph_show_author,
+                    app.config.graph_show_date,
+                ));
                 *r
             }
             GraphItem::File(k) => {
@@ -122,7 +128,13 @@ fn connector_row(row: &GraphRow, max_col: usize) -> Line<'static> {
     Line::from(lane_spans(row, max_col))
 }
 
-fn render_row(row: &GraphRow, max_col: usize, cursor: bool) -> Line<'static> {
+fn render_row(
+    row: &GraphRow,
+    max_col: usize,
+    cursor: bool,
+    show_author: bool,
+    show_date: bool,
+) -> Line<'static> {
     let mut spans: Vec<Span> = Vec::new();
 
     let mut through: Vec<Option<usize>> = vec![None; max_col + 1];
@@ -217,5 +229,17 @@ fn render_row(row: &GraphRow, max_col: usize, cursor: bool) -> Line<'static> {
         summary = summary.add_modifier(Modifier::BOLD);
     }
     spans.push(Span::styled(row.summary.clone(), summary));
+    if show_author && !row.author.is_empty() {
+        spans.push(Span::styled(
+            format!("  {}", row.author),
+            text_style.fg(Color::DarkGray),
+        ));
+    }
+    if show_date && !row.date.is_empty() {
+        spans.push(Span::styled(
+            format!("  {}", row.date),
+            text_style.fg(Color::DarkGray),
+        ));
+    }
     Line::from(spans)
 }

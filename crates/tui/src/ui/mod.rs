@@ -2,6 +2,7 @@ mod diff;
 mod graph;
 mod help;
 mod search;
+mod settings;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -32,6 +33,10 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     }
     if app.help_open {
         help::draw(frame, app, area);
+        return;
+    }
+    if app.settings_open {
+        settings::draw(frame, app, area);
         return;
     }
     match app.view_mode {

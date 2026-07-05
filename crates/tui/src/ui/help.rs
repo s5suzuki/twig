@@ -54,6 +54,7 @@ fn extras(lines: &mut Vec<Line<'static>>) {
     for (keys, desc) in [
         ("q / Ctrl+C", "Quit (all panes in multipane mode)"),
         ("?", "Toggle this help"),
+        (",", "Open the settings overlay"),
         ("c / a / z", "Changes: commit / amend / stash"),
         ("Space (stash row)", "Changes: pop / apply / drop the stash"),
         ("n / N", "Diff: next / previous find match"),
