@@ -12,6 +12,9 @@ pub fn layout_kdl(exe: &str, repo: &str, token: &str) -> String {
     let t = kdl_escape(token);
     format!(
         r#"layout {{
+    pane size=1 borderless=true {{
+        plugin location="zellij:tab-bar"
+    }}
     pane split_direction="vertical" {{
         pane size=26 command="{e}" name="repositories" {{
             args "--view" "sidebar" "--session" "{t}" "{r}"
@@ -25,6 +28,9 @@ pub fn layout_kdl(exe: &str, repo: &str, token: &str) -> String {
             args "--view" "main" "--session" "{t}" "{r}"
             close_on_exit true
         }}
+    }}
+    pane size=2 borderless=true {{
+        plugin location="zellij:status-bar"
     }}
 }}
 "#
@@ -96,6 +102,9 @@ mod tests {
         assert_eq!(
             kdl,
             r#"layout {
+    pane size=1 borderless=true {
+        plugin location="zellij:tab-bar"
+    }
     pane split_direction="vertical" {
         pane size=26 command="/usr/bin/twig-tui" name="repositories" {
             args "--view" "sidebar" "--session" "p123" "/home/u/repo"
@@ -109,6 +118,9 @@ mod tests {
             args "--view" "main" "--session" "p123" "/home/u/repo"
             close_on_exit true
         }
+    }
+    pane size=2 borderless=true {
+        plugin location="zellij:status-bar"
     }
 }
 "#

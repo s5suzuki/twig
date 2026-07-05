@@ -3,6 +3,9 @@
 // Run from inside the repository: each pane opens the current directory and
 // joins the same session automatically (session token derived from repo path).
 layout {
+    pane size=1 borderless=true {
+        plugin location="zellij:tab-bar"
+    }
     pane split_direction="vertical" {
         pane size=26 command="twig-tui" name="repositories" {
             args "--view" "sidebar"
@@ -16,5 +19,8 @@ layout {
             args "--view" "main"
             close_on_exit true
         }
+    }
+    pane size=2 borderless=true {
+        plugin location="zellij:status-bar"
     }
 }
