@@ -86,7 +86,11 @@ fn changes_and_side_by_side_diff_render_with_cjk() {
     assert!(find_line(&lines, "Changes (1)").is_some());
     assert!(find_line(&lines, "M hello.rs").is_some());
 
-    app.handle_input(vec![key(KeyCode::Enter)]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
     assert_eq!(app.active_tab, Tab::Diff);
     let lines = screen(&mut app, 140, 30);
     assert!(find_line(&lines, "@@").is_some(), "hunk header shown");
@@ -142,7 +146,11 @@ fn visual_select_and_yank_sets_pending_copy() {
     std::fs::write(dir.join("x.txt"), "one\nTWO\nthree\nfour\n").unwrap();
 
     let mut app = TuiApp::new(&dir).unwrap();
-    app.handle_input(vec![key(KeyCode::Enter)]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
     assert_eq!(app.active_tab, Tab::Diff);
     let _ = screen(&mut app, 120, 30);
 
@@ -165,8 +173,8 @@ fn stage_via_space_and_commit_updates_graph() {
     std::fs::write(dir.join("a.txt"), "changed\n").unwrap();
 
     let mut app = TuiApp::new(&dir).unwrap();
-    app.handle_input(vec![key(KeyCode::Char(' '))]);
-    assert_eq!(app.staged.len(), 1, "space stages the file");
+    app.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Char(' '))]);
+    assert_eq!(app.staged.len(), 1, "space on the Changes group stages all files");
 
     app.handle_input(vec![key(KeyCode::Char('c'))]);
     assert!(app.prompt.is_some(), "c opens commit prompt");
@@ -201,7 +209,11 @@ fn amend_prompt_prefills_head_message_and_rewrites_commit() {
     std::fs::write(dir.join("a.txt"), "b\n").unwrap();
 
     let mut app = TuiApp::new(&dir).unwrap();
-    app.handle_input(vec![key(KeyCode::Char(' '))]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char(' ')),
+    ]);
     assert_eq!(app.staged.len(), 1);
 
     app.handle_input(vec![key(KeyCode::Char('a'))]);
@@ -227,7 +239,11 @@ fn discard_file_asks_confirmation_before_restoring() {
     std::fs::write(dir.join("a.txt"), "two\n").unwrap();
 
     let mut app = TuiApp::new(&dir).unwrap();
-    app.handle_input(vec![key(KeyCode::Char('d'))]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('d')),
+    ]);
     assert!(app.prompt.is_some(), "d asks for confirmation");
     let lines = screen(&mut app, 140, 30);
     assert!(find_line(&lines, "Discard changes to a.txt?").is_some());
@@ -273,7 +289,11 @@ fn count_staged_changes(dir: &Path) -> usize {
 fn visual_stage_selection_stages_only_selected_lines() {
     let dir = two_hunk_repo();
     let mut app = TuiApp::new(&dir).unwrap();
-    app.handle_input(vec![key(KeyCode::Enter)]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
     assert_eq!(app.active_tab, Tab::Diff);
 
     app.handle_input(vec![key(KeyCode::Char('s'))]);
@@ -286,7 +306,11 @@ fn visual_stage_selection_stages_only_selected_lines() {
 fn hunk_stage_stages_whole_hunk_under_cursor() {
     let dir = two_hunk_repo();
     let mut app = TuiApp::new(&dir).unwrap();
-    app.handle_input(vec![key(KeyCode::Enter)]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
 
     app.handle_input(vec![KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT)]);
     assert_eq!(app.staged.len(), 1);
@@ -298,7 +322,11 @@ fn hunk_stage_stages_whole_hunk_under_cursor() {
 fn diff_discard_selection_confirms_then_reverts_lines() {
     let dir = two_hunk_repo();
     let mut app = TuiApp::new(&dir).unwrap();
-    app.handle_input(vec![key(KeyCode::Enter)]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
 
     app.handle_input(vec![key(KeyCode::Char('d'))]);
     assert!(app.prompt.is_some(), "line discard asks for confirmation");
@@ -512,6 +540,83 @@ fn wait_remote(app: &mut TuiApp) {
 }
 
 #[test]
+fn changes_folder_row_bulk_stages_and_folds() {
+    let dir = temp_repo();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.rs"), "a\n").unwrap();
+    std::fs::write(dir.join("src/b.rs"), "b\n").unwrap();
+    std::fs::write(dir.join("top.txt"), "t\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("src/a.rs"), "a2\n").unwrap();
+    std::fs::write(dir.join("src/b.rs"), "b2\n").unwrap();
+    std::fs::write(dir.join("top.txt"), "t2\n").unwrap();
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "▾ src/").is_some(), "folder row rendered");
+
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('h')),
+    ]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "▸ src/").is_some(), "h folds the folder");
+    assert!(find_line(&lines, "a.rs").is_none(), "children hidden while folded");
+    assert!(find_line(&lines, "top.txt").is_some(), "siblings still listed");
+
+    app.handle_input(vec![key(KeyCode::Char('l'))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "▾ src/").is_some(), "l unfolds the folder");
+    assert!(find_line(&lines, "a.rs").is_some());
+
+    app.handle_input(vec![key(KeyCode::Char(' '))]);
+    assert_eq!(app.staged.len(), 2, "space on the folder stages its files");
+    assert_eq!(app.unstaged.len(), 1, "sibling file stays unstaged");
+
+    app.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Char('h'))]);
+    let items = app.changes_items();
+    assert!(
+        matches!(
+            items[app.changes_cursor],
+            twig_tui::app::ChangesItem::Folder { .. }
+        ),
+        "h on a child jumps to the parent folder"
+    );
+
+    app.handle_input(vec![key(KeyCode::Char(' '))]);
+    assert!(app.staged.is_empty(), "space on the staged folder unstages");
+    assert_eq!(app.unstaged.len(), 3);
+}
+
+#[test]
+fn changes_group_row_bulk_discard_confirms() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "two\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "one2\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "two2\n").unwrap();
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Char('d'))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "Discard changes to all 2 files? (y/n)").is_some(),
+        "group discard confirms with a count"
+    );
+    app.handle_input(vec![key(KeyCode::Char('n'))]);
+    assert_eq!(app.unstaged.len(), 2, "n keeps the changes");
+
+    app.handle_input(vec![key(KeyCode::Char('d')), key(KeyCode::Char('y'))]);
+    assert!(app.unstaged.is_empty(), "y discards every unstaged file");
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one\n");
+    assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "two\n");
+}
+
+#[test]
 fn stash_push_show_and_pop_via_prompts() {
     let dir = temp_repo();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
@@ -527,7 +632,12 @@ fn stash_push_show_and_pop_via_prompts() {
     let lines = screen(&mut app, 140, 30);
     assert!(find_line(&lines, "Stashes (1)").is_some());
 
-    app.handle_input(vec![key(KeyCode::Enter)]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
     let lines = screen(&mut app, 140, 30);
     let row = find_line(&lines, "two").expect("stash diff rendered");
     assert!(row.contains("one"), "old content on the left: {row}");
@@ -554,7 +664,13 @@ fn stash_drop_requires_confirmation() {
 
     let mut app = TuiApp::new(&dir).unwrap();
     app.handle_input(vec![key(KeyCode::Char('z'))]);
-    app.handle_input(vec![key(KeyCode::Char(' ')), key(KeyCode::Char('d'))]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char(' ')),
+        key(KeyCode::Char('d')),
+    ]);
     let lines = screen(&mut app, 140, 30);
     assert!(find_line(&lines, "Drop stash@{0}? (y/n)").is_some());
     app.handle_input(vec![key(KeyCode::Char('y'))]);
@@ -699,7 +815,11 @@ fn search_tab_finds_and_replaces_across_repo() {
 fn diff_find_jumps_and_highlights() {
     let dir = two_hunk_repo();
     let mut app = TuiApp::new(&dir).unwrap();
-    app.handle_input(vec![key(KeyCode::Enter)]);
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
     assert_eq!(app.active_tab, Tab::Diff);
 
     app.handle_input(vec![key(KeyCode::Char('/'))]);

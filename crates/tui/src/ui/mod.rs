@@ -9,7 +9,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Tabs};
 
-use crate::app::{Pane, Tab, TuiApp, View, ViewMode};
+use crate::app::{ChangesItem, Pane, Tab, TuiApp, View, ViewMode};
 
 pub const FOCUS_FG: Color = Color::Cyan;
 
@@ -199,78 +199,84 @@ fn draw_changes(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
 fn draw_change_list(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     app.changes_view_rows = area.height as usize;
 
-    struct Row {
-        text: String,
-        header: bool,
-        file_idx: Option<usize>,
-    }
-    let mut rows: Vec<Row> = Vec::new();
-    rows.push(Row {
-        text: format!("Staged ({})", app.staged.len()),
-        header: true,
-        file_idx: None,
-    });
-    for (i, e) in app.staged.iter().enumerate() {
-        rows.push(Row {
-            text: format!(" {} {}", e.kind.marker(), e.path),
-            header: false,
-            file_idx: Some(i),
-        });
-    }
-    rows.push(Row {
-        text: format!("Changes ({})", app.unstaged.len()),
-        header: true,
-        file_idx: None,
-    });
-    for (i, e) in app.unstaged.iter().enumerate() {
-        rows.push(Row {
-            text: format!(" {} {}", e.kind.marker(), e.path),
-            header: false,
-            file_idx: Some(app.staged.len() + i),
-        });
-    }
-    if !app.stashes.is_empty() {
-        rows.push(Row {
-            text: format!("Stashes ({})", app.stashes.len()),
-            header: true,
-            file_idx: None,
-        });
-        let base = app.staged.len() + app.unstaged.len();
-        for (i, s) in app.stashes.iter().enumerate() {
-            rows.push(Row {
-                text: format!(" stash@{{{}}} {}", s.index, s.message),
-                header: false,
-                file_idx: Some(base + i),
-            });
-        }
-    }
-
-    let cursor_row = rows
-        .iter()
-        .position(|r| r.file_idx == Some(app.changes_cursor))
-        .unwrap_or(0);
+    let items = app.changes_items();
+    let cursor = app.changes_cursor.min(items.len().saturating_sub(1));
     let h = area.height as usize;
     if h > 0 {
-        if cursor_row < app.changes_scroll {
-            app.changes_scroll = cursor_row;
+        if cursor < app.changes_scroll {
+            app.changes_scroll = cursor;
         }
-        if cursor_row >= app.changes_scroll + h {
-            app.changes_scroll = cursor_row + 1 - h;
+        if cursor >= app.changes_scroll + h {
+            app.changes_scroll = cursor + 1 - h;
         }
-        app.changes_scroll = app.changes_scroll.min(rows.len().saturating_sub(1));
+        app.changes_scroll = app.changes_scroll.min(items.len().saturating_sub(1));
     }
 
+    let marker = |path: &str, staged: bool| {
+        let entries = if staged { &app.staged } else { &app.unstaged };
+        entries
+            .iter()
+            .find(|e| e.path == path)
+            .map(|e| e.kind.marker())
+            .unwrap_or(' ')
+    };
+
     let mut lines: Vec<Line> = Vec::new();
-    for (i, row) in rows.iter().enumerate().skip(app.changes_scroll).take(h) {
-        let mut style = if row.header {
+    for (i, item) in items.iter().enumerate().skip(app.changes_scroll).take(h) {
+        let (text, header) = match item {
+            ChangesItem::Group { staged: true } => {
+                (format!("Staged ({})", app.staged.len()), true)
+            }
+            ChangesItem::Group { staged: false } => {
+                (format!("Changes ({})", app.unstaged.len()), true)
+            }
+            ChangesItem::StashHeader => (format!("Stashes ({})", app.stashes.len()), true),
+            ChangesItem::Folder {
+                name, open, depth, ..
+            } => (
+                format!(
+                    "{}{} {}/",
+                    "  ".repeat(*depth),
+                    if *open { "▾" } else { "▸" },
+                    name
+                ),
+                false,
+            ),
+            ChangesItem::File {
+                path,
+                staged,
+                depth,
+            } => {
+                let name = path.rsplit('/').next().unwrap_or(path);
+                (
+                    format!(
+                        "{}{} {}",
+                        "  ".repeat(*depth),
+                        marker(path, *staged),
+                        name
+                    ),
+                    false,
+                )
+            }
+            ChangesItem::Stash(index) => {
+                let msg = app
+                    .stashes
+                    .iter()
+                    .find(|s| s.index == *index)
+                    .map(|s| s.message.as_str())
+                    .unwrap_or("");
+                (format!("  stash@{{{index}}} {msg}"), false)
+            }
+        };
+        let mut style = if header {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
-        if app.focus == Pane::Changes && i == cursor_row && row.file_idx.is_some() {
+        if app.focus == Pane::Changes && i == cursor {
             style = style.add_modifier(Modifier::REVERSED);
         }
-        lines.push(Line::styled(row.text.clone(), style));
+        lines.push(Line::styled(text, style));
     }
     frame.render_widget(Paragraph::new(lines), area);
 }

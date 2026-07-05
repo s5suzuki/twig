@@ -131,7 +131,11 @@ fn enter_in_changes_pane_shows_diff_in_main_pane() {
     main.sync_session();
     assert_eq!(main.active_tab, Tab::Graph);
 
-    changes.handle_input(vec![key(KeyCode::Enter)]);
+    changes.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
     assert_eq!(changes.focus, Pane::Changes, "focus stays in own pane");
     assert!(
         changes.pending_focus_jump,

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -284,8 +285,33 @@ pub enum GraphItem {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ChangesItem {
-    File(String, bool),
+    Group {
+        staged: bool,
+    },
+    Folder {
+        name: String,
+        path: String,
+        staged: bool,
+        open: bool,
+        depth: usize,
+    },
+    File {
+        path: String,
+        staged: bool,
+        depth: usize,
+    },
+    StashHeader,
     Stash(usize),
+}
+
+impl ChangesItem {
+    pub fn depth(&self) -> usize {
+        match self {
+            ChangesItem::Group { .. } | ChangesItem::StashHeader => 0,
+            ChangesItem::Folder { depth, .. } | ChangesItem::File { depth, .. } => *depth,
+            ChangesItem::Stash(_) => 1,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -412,6 +438,7 @@ pub struct TuiApp {
     pub changes_cursor: usize,
     pub changes_scroll: usize,
     pub changes_view_rows: usize,
+    pub changes_folds: HashSet<(bool, String)>,
 
     pub selected_file: Option<(String, bool)>,
     pub selected_commit: Option<Oid>,
@@ -491,6 +518,7 @@ impl TuiApp {
             changes_cursor: 0,
             changes_scroll: 0,
             changes_view_rows: 20,
+            changes_folds: HashSet::new(),
             selected_file: None,
             selected_commit: None,
             selected_commit_file: None,
@@ -572,20 +600,53 @@ impl TuiApp {
     }
 
     pub fn changes_items(&self) -> Vec<ChangesItem> {
-        self.staged
+        let mut out = Vec::new();
+        out.push(ChangesItem::Group { staged: true });
+        self.push_side_items(true, &mut out);
+        out.push(ChangesItem::Group { staged: false });
+        self.push_side_items(false, &mut out);
+        if !self.stashes.is_empty() {
+            out.push(ChangesItem::StashHeader);
+            out.extend(self.stashes.iter().map(|s| ChangesItem::Stash(s.index)));
+        }
+        out
+    }
+
+    fn push_side_items(&self, staged: bool, out: &mut Vec<ChangesItem>) {
+        let entries = if staged { &self.staged } else { &self.unstaged };
+        let files: Vec<CommitFile> = entries
             .iter()
-            .map(|e| ChangesItem::File(e.path.clone(), true))
-            .chain(
-                self.unstaged
-                    .iter()
-                    .map(|e| ChangesItem::File(e.path.clone(), false)),
-            )
-            .chain(self.stashes.iter().map(|s| ChangesItem::Stash(s.index)))
-            .collect()
+            .map(|e| CommitFile {
+                path: e.path.clone(),
+                kind: e.kind,
+            })
+            .collect();
+        let folded: HashSet<String> = self
+            .changes_folds
+            .iter()
+            .filter(|(s, _)| *s == staged)
+            .map(|(_, p)| p.clone())
+            .collect();
+        for row in repo::commit_file_rows(&files, true, &folded) {
+            out.push(match row.kind {
+                repo::CommitRowKind::Folder { name, path, open } => ChangesItem::Folder {
+                    name,
+                    path,
+                    staged,
+                    open,
+                    depth: row.depth + 1,
+                },
+                repo::CommitRowKind::File(i) => ChangesItem::File {
+                    path: files[i].path.clone(),
+                    staged,
+                    depth: row.depth + 1,
+                },
+            });
+        }
     }
 
     fn clamp_changes_cursor(&mut self) {
-        let n = self.staged.len() + self.unstaged.len() + self.stashes.len();
+        let n = self.changes_items().len();
         self.changes_cursor = self.changes_cursor.min(n.saturating_sub(1));
     }
 
@@ -1585,77 +1646,182 @@ impl TuiApp {
     }
 
     fn changes_keys(&mut self, queue: &mut KeyQueue) {
-        let items = self.changes_items();
-        let last = items.len().saturating_sub(1);
         let half = (self.changes_view_rows / 2).max(1);
         let actions = self
             .keymap
             .resolve(queue, Context::Changes, &mut self.pending_prefix, |_| true);
         for a in actions {
+            let items = self.changes_items();
+            let last = items.len().saturating_sub(1);
+            let cursor = self.changes_cursor.min(last);
+            let item = items.get(cursor).cloned();
             match a {
-                Action::ChangesDown => self.changes_cursor = (self.changes_cursor + 1).min(last),
-                Action::ChangesUp => self.changes_cursor = self.changes_cursor.saturating_sub(1),
+                Action::ChangesDown => self.changes_cursor = (cursor + 1).min(last),
+                Action::ChangesUp => self.changes_cursor = cursor.saturating_sub(1),
                 Action::ChangesTop => self.changes_cursor = 0,
                 Action::ChangesBottom => self.changes_cursor = last,
                 Action::ChangesHalfPageDown => {
-                    self.changes_cursor = (self.changes_cursor + half).min(last)
+                    self.changes_cursor = (cursor + half).min(last)
                 }
                 Action::ChangesHalfPageUp => {
-                    self.changes_cursor = self.changes_cursor.saturating_sub(half)
+                    self.changes_cursor = cursor.saturating_sub(half)
                 }
-                Action::ChangesActivate | Action::ChangesExpand => {
-                    match items.get(self.changes_cursor).cloned() {
-                        Some(ChangesItem::File(path, staged)) => {
-                            self.open_file_diff(path, staged);
-                            self.pending_focus_jump = self.error.is_none();
-                        }
-                        Some(ChangesItem::Stash(index)) => {
-                            if let Some(oid) =
-                                self.stashes.iter().find(|s| s.index == index).map(|s| s.oid)
-                            {
-                                self.open_commit_diff(oid);
-                                self.pending_focus_jump = self.error.is_none();
-                            }
-                        }
-                        None => {}
+                Action::ChangesActivate => match item {
+                    Some(ChangesItem::Folder { path, staged, open, .. }) => {
+                        self.set_fold(staged, path, open);
                     }
-                }
-                Action::ChangesStageToggle => {
-                    match items.get(self.changes_cursor).cloned() {
-                        Some(ChangesItem::File(path, staged)) => self.toggle_stage(&path, staged),
-                        Some(ChangesItem::Stash(index)) => {
-                            self.prompt = Some((Prompt::StashOp { index }, String::new()));
-                        }
-                        None => {}
+                    item => self.changes_open(item),
+                },
+                Action::ChangesExpand => match item {
+                    Some(ChangesItem::Folder {
+                        path,
+                        staged,
+                        open: false,
+                        ..
+                    }) => self.set_fold(staged, path, false),
+                    Some(ChangesItem::Folder { .. })
+                    | Some(ChangesItem::Group { .. })
+                    | Some(ChangesItem::StashHeader) => {
+                        self.changes_cursor = (cursor + 1).min(last)
                     }
-                }
+                    item => self.changes_open(item),
+                },
+                Action::ChangesCollapse => match item {
+                    Some(ChangesItem::Folder {
+                        path,
+                        staged,
+                        open: true,
+                        ..
+                    }) => self.set_fold(staged, path, true),
+                    Some(it) => {
+                        let depth = it.depth();
+                        if depth > 0
+                            && let Some(p) = (0..cursor).rev().find(|&i| {
+                                items[i].depth() < depth
+                                    && matches!(
+                                        items[i],
+                                        ChangesItem::Folder { .. }
+                                            | ChangesItem::Group { .. }
+                                            | ChangesItem::StashHeader
+                                    )
+                            })
+                        {
+                            self.changes_cursor = p;
+                        }
+                    }
+                    None => {}
+                },
+                Action::ChangesStageToggle => match item {
+                    Some(ChangesItem::File { path, staged, .. }) => {
+                        self.stage_paths(staged, vec![path])
+                    }
+                    Some(ChangesItem::Folder { path, staged, .. }) => {
+                        let paths = self.side_paths(staged, Some(&path));
+                        self.stage_paths(staged, paths);
+                    }
+                    Some(ChangesItem::Group { staged }) => {
+                        let paths = self.side_paths(staged, None);
+                        self.stage_paths(staged, paths);
+                    }
+                    Some(ChangesItem::Stash(index)) => {
+                        self.prompt = Some((Prompt::StashOp { index }, String::new()));
+                    }
+                    _ => {}
+                },
                 Action::ChangesEdit => {
-                    if let Some(ChangesItem::File(path, _)) = items.get(self.changes_cursor) {
+                    if let Some(ChangesItem::File { path, .. }) = item {
                         self.pending_editor = Some(self.selected.join(path));
                     }
                 }
-                Action::ChangesDiscard => {
-                    if let Some(ChangesItem::File(path, false)) =
-                        items.get(self.changes_cursor).cloned()
-                    {
-                        let mut paths = vec![path.clone()];
-                        if let Some(old) = self
-                            .unstaged
-                            .iter()
-                            .find(|e| e.path == path)
-                            .and_then(|e| e.old_path.clone())
-                        {
-                            paths.push(old);
-                        }
-                        self.prompt = Some((
-                            Prompt::ConfirmDiscardFiles { paths, label: path },
-                            String::new(),
-                        ));
-                    }
-                }
+                Action::ChangesDiscard => self.changes_discard(item),
                 _ => {}
             }
         }
+    }
+
+    fn changes_open(&mut self, item: Option<ChangesItem>) {
+        match item {
+            Some(ChangesItem::File { path, staged, .. }) => {
+                self.open_file_diff(path, staged);
+                self.pending_focus_jump = self.error.is_none();
+            }
+            Some(ChangesItem::Stash(index)) => {
+                if let Some(oid) = self.stashes.iter().find(|s| s.index == index).map(|s| s.oid) {
+                    self.open_commit_diff(oid);
+                    self.pending_focus_jump = self.error.is_none();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn set_fold(&mut self, staged: bool, path: String, folded: bool) {
+        if folded {
+            self.changes_folds.insert((staged, path));
+        } else {
+            self.changes_folds.remove(&(staged, path));
+        }
+        self.clamp_changes_cursor();
+    }
+
+    fn side_paths(&self, staged: bool, folder: Option<&str>) -> Vec<String> {
+        let entries = if staged { &self.staged } else { &self.unstaged };
+        let prefix = folder.map(|p| format!("{p}/"));
+        entries
+            .iter()
+            .filter(|e| prefix.as_deref().is_none_or(|p| e.path.starts_with(p)))
+            .map(|e| e.path.clone())
+            .collect()
+    }
+
+    fn changes_discard(&mut self, item: Option<ChangesItem>) {
+        let folder = match item {
+            Some(ChangesItem::File {
+                path,
+                staged: false,
+                ..
+            }) => {
+                let mut paths = vec![path.clone()];
+                if let Some(old) = self
+                    .unstaged
+                    .iter()
+                    .find(|e| e.path == path)
+                    .and_then(|e| e.old_path.clone())
+                {
+                    paths.push(old);
+                }
+                self.prompt = Some((
+                    Prompt::ConfirmDiscardFiles { paths, label: path },
+                    String::new(),
+                ));
+                return;
+            }
+            Some(ChangesItem::Folder {
+                path,
+                staged: false,
+                ..
+            }) => Some(path.clone()),
+            Some(ChangesItem::Group { staged: false }) => None,
+            _ => return,
+        };
+        let files = self.side_paths(false, folder.as_deref());
+        if files.is_empty() {
+            return;
+        }
+        let label = match &folder {
+            Some(path) => format!("{path}/ ({} files)", files.len()),
+            None => format!("all {} files", files.len()),
+        };
+        let paths = self
+            .unstaged
+            .iter()
+            .filter(|e| files.contains(&e.path))
+            .flat_map(|e| std::iter::once(e.path.clone()).chain(e.old_path.clone()))
+            .collect();
+        self.prompt = Some((
+            Prompt::ConfirmDiscardFiles { paths, label },
+            String::new(),
+        ));
     }
 
     fn stash_push(&mut self) {
@@ -1678,8 +1844,10 @@ impl TuiApp {
         self.refresh();
     }
 
-    fn toggle_stage(&mut self, path: &str, staged: bool) {
-        let paths = vec![path.to_string()];
+    fn stage_paths(&mut self, staged: bool, paths: Vec<String>) {
+        if paths.is_empty() {
+            return;
+        }
         let res = if staged {
             repo::unstage(&self.selected, &paths)
         } else {
