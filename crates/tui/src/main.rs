@@ -6,7 +6,7 @@ use std::time::Duration;
 use ratatui::crossterm::event::{self, Event, KeyEvent};
 use twig_core::watch::WorktreeWatcher;
 
-use twig_tui::app::{TuiApp, View, ViewMode};
+use twig_tui::app::{Tab, TuiApp, View, ViewMode};
 use twig_tui::session::{self, Session};
 use twig_tui::{clipboard, ui, zellij};
 
@@ -199,7 +199,13 @@ fn run(
         let mut keys: Vec<KeyEvent> = Vec::new();
         let mut dirty = false;
 
-        if event::poll(Duration::from_millis(250))? {
+        let editor_visible = app.active_tab == Tab::Editor && app.term.is_some();
+        let timeout = if editor_visible {
+            Duration::from_millis(15)
+        } else {
+            Duration::from_millis(250)
+        };
+        if event::poll(timeout)? {
             loop {
                 match event::read()? {
                     Event::Key(k) => keys.push(k),
@@ -231,6 +237,16 @@ fn run(
 
         if app.poll_diff_recheck() {
             dirty = true;
+        }
+
+        if let Some(term) = app.term.as_mut() {
+            if term.pump() {
+                dirty = true;
+            }
+            if !term.is_alive() {
+                app.term = None;
+                dirty = true;
+            }
         }
 
         if !keys.is_empty() {
@@ -296,6 +312,10 @@ fn open_editor(
     use ratatui::crossterm::terminal::{
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
     };
+
+    if app.open_in_embedded(file) {
+        return Ok(());
+    }
 
     if let Some(server) = nvim_server() {
         if let Err(e) = twig_core::editor::open_abs_in_server(file, std::path::Path::new(&server))

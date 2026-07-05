@@ -296,8 +296,9 @@ fn draw_right(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
         Tab::Graph => 0,
         Tab::Diff => 1,
         Tab::Search => 2,
+        Tab::Editor => 3,
     };
-    let tabs = Tabs::new(["Graph", "Diff", "Search"])
+    let tabs = Tabs::new(["Graph", "Diff", "Search", "Editor"])
         .select(selected)
         .highlight_style(Style::default().fg(FOCUS_FG).add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, rows[0]);
@@ -306,5 +307,24 @@ fn draw_right(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
         Tab::Graph => graph::draw(frame, app, rows[1]),
         Tab::Diff => diff::draw(frame, app, rows[1]),
         Tab::Search => search::draw(frame, app, rows[1]),
+        Tab::Editor => draw_editor(frame, app, rows[1]),
     }
+}
+
+fn draw_editor(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
+    let alive = app.term.as_mut().is_some_and(|t| t.is_alive());
+    if !alive {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                "(nvim is not running — re-enter this tab to restart it)",
+                Style::default().fg(Color::DarkGray),
+            )),
+            area,
+        );
+        return;
+    }
+    let focused = app.focus == Pane::RightTab;
+    let term = app.term.as_mut().unwrap();
+    term.pump();
+    term.draw(frame.buffer_mut(), area, focused);
 }

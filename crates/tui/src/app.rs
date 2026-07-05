@@ -26,6 +26,7 @@ pub enum Tab {
     Graph,
     Diff,
     Search,
+    Editor,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -476,6 +477,8 @@ pub struct TuiApp {
     diff_recheck_at: Option<std::time::Instant>,
     pub pending_copy: Option<String>,
     pub pending_focus_jump: bool,
+    pub term: Option<crate::term::EditorTerm>,
+    pub nvim_socket: PathBuf,
 }
 
 pub struct SidebarRow {
@@ -554,6 +557,8 @@ impl TuiApp {
             diff_recheck_at: None,
             pending_copy: None,
             pending_focus_jump: false,
+            term: None,
+            nvim_socket: nvim_socket_path(),
         };
         app.sync_stash_and_seq();
         Ok(app)
@@ -813,6 +818,10 @@ impl TuiApp {
                 self.handle_settings_key(ev);
                 continue;
             }
+            if self.editor_focused() {
+                self.handle_editor_key(ev);
+                continue;
+            }
             if ev.kind != KeyEventKind::Release && ev.code == KeyCode::Char('?') {
                 self.help_open = true;
                 self.help_scroll = 0;
@@ -968,6 +977,7 @@ impl TuiApp {
                 Tab::Graph => self.graph_keys(queue),
                 Tab::Diff => self.diff_keys(queue),
                 Tab::Search => self.search_keys(queue),
+                Tab::Editor => {}
             },
         }
     }
@@ -1012,6 +1022,7 @@ impl TuiApp {
                 Tab::Graph => self.graph_keys(queue),
                 Tab::Diff => self.diff_keys(queue),
                 Tab::Search => self.search_keys(queue),
+                Tab::Editor => {}
             },
         }
 
@@ -2561,11 +2572,79 @@ impl TuiApp {
             self.focus = Pane::RightTab;
             return;
         }
-        let order = [Tab::Graph, Tab::Diff, Tab::Search];
+        let order = [Tab::Graph, Tab::Diff, Tab::Search, Tab::Editor];
         let cur = order.iter().position(|t| *t == self.active_tab).unwrap_or(0) as isize;
         let next = (cur + dir).rem_euclid(order.len() as isize) as usize;
         self.active_tab = order[next];
+        if self.active_tab == Tab::Editor {
+            self.ensure_editor();
+        }
     }
+
+    pub fn ensure_editor(&mut self) {
+        if self.term.as_mut().is_some_and(|t| t.is_alive()) {
+            return;
+        }
+        match crate::term::EditorTerm::spawn_nvim(&self.nvim_socket, &self.selected) {
+            Ok(t) => {
+                self.term = Some(t);
+                self.error = None;
+            }
+            Err(e) => {
+                self.term = None;
+                self.error = Some(format!("nvim spawn failed: {e}"));
+            }
+        }
+    }
+
+    fn editor_focused(&mut self) -> bool {
+        self.active_tab == Tab::Editor
+            && self.focus == Pane::RightTab
+            && matches!(self.view_mode, ViewMode::All | ViewMode::Single(View::Main))
+            && self.term.as_mut().is_some_and(|t| t.is_alive())
+    }
+
+    fn handle_editor_key(&mut self, ev: KeyEvent) {
+        if ev.kind == KeyEventKind::Release {
+            return;
+        }
+        let alt = ev.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
+        match ev.code {
+            KeyCode::Char('h') if alt => return self.focus_move(-1),
+            KeyCode::Char('l') if alt => return self.focus_move(1),
+            KeyCode::Tab if ctrl => return self.cycle_tab(1),
+            KeyCode::BackTab if ctrl => return self.cycle_tab(-1),
+            _ => {}
+        }
+        if let Some(t) = self.term.as_mut() {
+            t.feed_key(&ev);
+        }
+    }
+
+    pub fn open_in_embedded(&mut self, file: &Path) -> bool {
+        if !matches!(self.view_mode, ViewMode::All | ViewMode::Single(View::Main)) {
+            return false;
+        }
+        if !self.term.as_mut().is_some_and(|t| t.is_alive()) {
+            return false;
+        }
+        match twig_core::editor::open_abs_in_server(file, &self.nvim_socket) {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(e),
+        }
+        self.active_tab = Tab::Editor;
+        self.focus = Pane::RightTab;
+        true
+    }
+}
+
+fn nvim_socket_path() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("twig")
+        .join(format!("{}-nvim.sock", std::process::id()))
 }
 
 fn diff_mode(staged: bool) -> repo::DiffMode {

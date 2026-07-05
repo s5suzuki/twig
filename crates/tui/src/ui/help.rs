@@ -22,6 +22,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
         (Pane::RightTab, Tab::Graph) => Some(Context::Graph),
         (Pane::RightTab, Tab::Diff) => Some(Context::Diff),
         (Pane::RightTab, Tab::Search) => None,
+        (Pane::RightTab, Tab::Editor) => None,
     };
     if let Some(ctx) = focused {
         section(&mut lines, app, ctx);

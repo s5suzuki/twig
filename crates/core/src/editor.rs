@@ -27,6 +27,9 @@ pub fn open_abs_in_server(abs: &Path, server: &Path) -> Result<(), String> {
             "--remote",
             &abs.to_string_lossy(),
         ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("Failed to send nvim --remote: {e}"))

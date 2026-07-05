@@ -4520,13 +4520,20 @@ dependencies = [
 name = "twig-git-client"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "eframe",
  "egui",
  "git2",
- "portable-pty",
  "regex",
  "twig-core",
+ "twig-term",
+]
+
+[[package]]
+name = "twig-term"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "portable-pty",
 ]
 
 [[package]]
@@ -4537,6 +4544,7 @@ dependencies = [
  "serde",
  "serde_json",
  "twig-core",
+ "twig-term",
  "unicode-width",
 ]
 
