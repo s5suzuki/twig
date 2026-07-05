@@ -201,6 +201,10 @@ fn run(
             dirty = true;
         }
 
+        if app.poll_remote() {
+            dirty = true;
+        }
+
         if !keys.is_empty() {
             app.handle_input(keys);
             dirty = true;

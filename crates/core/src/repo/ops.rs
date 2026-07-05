@@ -355,6 +355,7 @@ pub fn reset(repo_path: &Path, oid: Oid, mode: ResetMode) -> Result<(), git2::Er
 pub struct StashEntry {
     pub index: usize,
     pub message: String,
+    pub oid: Oid,
 }
 
 pub fn stash_save(repo_path: &Path, message: Option<&str>) -> Result<(), git2::Error> {
@@ -367,10 +368,11 @@ pub fn stash_save(repo_path: &Path, message: Option<&str>) -> Result<(), git2::E
 pub fn stash_list(repo_path: &Path) -> Vec<StashEntry> {
     let mut out = Vec::new();
     if let Ok(mut repo) = Repository::open(repo_path) {
-        let _ = repo.stash_foreach(|index, message, _oid| {
+        let _ = repo.stash_foreach(|index, message, oid| {
             out.push(StashEntry {
                 index,
                 message: message.to_string(),
+                oid: *oid,
             });
             true
         });

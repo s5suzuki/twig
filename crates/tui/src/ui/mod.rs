@@ -13,6 +13,16 @@ pub const FOCUS_FG: Color = Color::Cyan;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let mut area = frame.area();
+    if app.seq.is_some() {
+        let parts = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
+        draw_seq_banner(frame, app, parts[0]);
+        area = parts[1];
+    }
+    if app.remote.is_some() {
+        let parts = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
+        draw_remote_bar(frame, app, parts[1]);
+        area = parts[0];
+    }
     if app.prompt.is_some() {
         let parts = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
         draw_prompt_bar(frame, app, parts[1]);
@@ -22,6 +32,44 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         ViewMode::All => draw_all(frame, app, area),
         ViewMode::Single(view) => draw_single(frame, app, view, area),
     }
+}
+
+fn draw_seq_banner(frame: &mut Frame, app: &TuiApp, area: Rect) {
+    let Some((kind, conflicts)) = &app.seq else {
+        return;
+    };
+    let mut text = format!(
+        "{} in progress — C: continue / A: abort",
+        crate::app::seq_label(*kind)
+    );
+    if !conflicts.is_empty() {
+        text.push_str(&format!(
+            "  |  conflicts ({}): {}",
+            conflicts.len(),
+            conflicts.join(", ")
+        ));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            text,
+            Style::default().fg(Color::Black).bg(Color::Yellow),
+        )),
+        area,
+    );
+}
+
+fn draw_remote_bar(frame: &mut Frame, app: &TuiApp, area: Rect) {
+    let Some(job) = &app.remote else {
+        return;
+    };
+    let text = match job.progress {
+        Some((r, t)) if t > 0 => format!("{} {r}/{t}…", job.kind.running()),
+        _ => format!("{}…", job.kind.running()),
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(text, Style::default().fg(Color::Cyan))),
+        area,
+    );
 }
 
 fn draw_prompt_bar(frame: &mut Frame, app: &TuiApp, area: Rect) {
@@ -125,7 +173,10 @@ fn draw_changes(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
 
     frame.render_widget(
         Paragraph::new(Line::styled(
-            format!("c: commit / a: amend ({} staged)", app.staged.len()),
+            format!(
+                "c: commit / a: amend / z: stash ({} staged)",
+                app.staged.len()
+            ),
             Style::default().fg(Color::DarkGray),
         )),
         parts[0],
@@ -171,6 +222,21 @@ fn draw_change_list(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
             header: false,
             file_idx: Some(app.staged.len() + i),
         });
+    }
+    if !app.stashes.is_empty() {
+        rows.push(Row {
+            text: format!("Stashes ({})", app.stashes.len()),
+            header: true,
+            file_idx: None,
+        });
+        let base = app.staged.len() + app.unstaged.len();
+        for (i, s) in app.stashes.iter().enumerate() {
+            rows.push(Row {
+                text: format!(" stash@{{{}}} {}", s.index, s.message),
+                header: false,
+                file_idx: Some(base + i),
+            });
+        }
     }
 
     let cursor_row = rows

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use serde::{Deserialize, Serialize};
@@ -142,6 +143,10 @@ pub enum Prompt {
     DeleteRef { refs: Vec<RefTarget> },
     ConfirmDeleteRef { target: RefTarget },
     PickRenameBranch { names: Vec<String> },
+    ConfirmForcePush { remote: String, refspec: String },
+    ConfirmSeqAbort,
+    StashOp { index: usize },
+    ConfirmStashDrop { index: usize },
 }
 
 impl Prompt {
@@ -163,6 +168,7 @@ impl Prompt {
                 | Prompt::Checkout { .. }
                 | Prompt::DeleteRef { .. }
                 | Prompt::PickRenameBranch { .. }
+                | Prompt::StashOp { .. }
         )
     }
 
@@ -206,6 +212,16 @@ impl Prompt {
                     .collect::<Vec<_>>()
                     .join("  ")
             ),
+            Prompt::ConfirmForcePush { remote, .. } => {
+                format!("Force push current branch to {remote}? (y/n)")
+            }
+            Prompt::ConfirmSeqAbort => "Abort the in-progress operation? (y/n)".to_string(),
+            Prompt::StashOp { index } => {
+                format!("stash@{{{index}}}: (p)op / (a)pply / (d)rop")
+            }
+            Prompt::ConfirmStashDrop { index } => {
+                format!("Drop stash@{{{index}}}? (y/n)")
+            }
         }
     }
 }
@@ -214,6 +230,64 @@ impl Prompt {
 pub enum GraphItem {
     Commit(usize),
     File(usize),
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ChangesItem {
+    File(String, bool),
+    Stash(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RemoteKind {
+    Fetch,
+    Pull,
+    Push,
+    ForcePush,
+    DeleteRemote,
+}
+
+impl RemoteKind {
+    pub fn verb(self) -> &'static str {
+        match self {
+            RemoteKind::Fetch => "fetch",
+            RemoteKind::Pull => "pull",
+            RemoteKind::Push => "push",
+            RemoteKind::ForcePush => "force push",
+            RemoteKind::DeleteRemote => "delete remote branch",
+        }
+    }
+
+    pub fn running(self) -> &'static str {
+        match self {
+            RemoteKind::Fetch => "Fetching",
+            RemoteKind::Pull => "Pulling",
+            RemoteKind::Push | RemoteKind::ForcePush => "Pushing",
+            RemoteKind::DeleteRemote => "Deleting remote branch",
+        }
+    }
+}
+
+enum RemoteMsg {
+    Progress(usize, usize),
+    Done(Result<repo::SeqOutcome, String>),
+}
+
+pub struct RemoteJob {
+    pub kind: RemoteKind,
+    pub progress: Option<(usize, usize)>,
+    rx: Receiver<RemoteMsg>,
+}
+
+pub fn seq_label(kind: repo::SeqState) -> &'static str {
+    match kind {
+        repo::SeqState::Rebase => "Rebase",
+        repo::SeqState::RebaseInteractive => "Interactive rebase",
+        repo::SeqState::CherryPick => "Cherry-pick",
+        repo::SeqState::Revert => "Revert",
+        repo::SeqState::Merge => "Merge",
+        repo::SeqState::None => "",
+    }
 }
 
 type Snapshot = (
@@ -267,6 +341,9 @@ pub struct TuiApp {
     pub prompt: Option<(Prompt, String)>,
     pub pending_editor: Option<PathBuf>,
     pub pending_shell: Option<Vec<String>>,
+    pub stashes: Vec<repo::StashEntry>,
+    pub seq: Option<(repo::SeqState, Vec<String>)>,
+    pub remote: Option<RemoteJob>,
     pub pending_copy: Option<String>,
     pub pending_focus_jump: bool,
 }
@@ -288,7 +365,7 @@ impl TuiApp {
         let (staged, unstaged) = repo::load_status(path).map_err(|e| e.to_string())?;
         let graph_limit = config.graph_commit_limit;
         let graph = repo::build_graph(path, graph_limit).map_err(|e| e.to_string())?;
-        Ok(Self {
+        let mut app = Self {
             root,
             selected: path.to_path_buf(),
             staged,
@@ -332,13 +409,27 @@ impl TuiApp {
             prompt: None,
             pending_editor: None,
             pending_shell: None,
+            stashes: Vec::new(),
+            seq: None,
+            remote: None,
             pending_copy: None,
             pending_focus_jump: false,
-        })
+        };
+        app.sync_stash_and_seq();
+        Ok(app)
+    }
+
+    fn sync_stash_and_seq(&mut self) {
+        self.stashes = repo::stash_list(&self.selected);
+        self.seq = match repo::seq_state(&self.selected) {
+            repo::SeqState::None => None,
+            kind => Some((kind, repo::seq_conflicts(&self.selected))),
+        };
     }
 
     pub fn refresh(&mut self) {
         repo::refresh_badges(&mut self.root);
+        self.sync_stash_and_seq();
         match repo::load_status(&self.selected) {
             Ok((staged, unstaged)) => {
                 self.staged = staged;
@@ -373,16 +464,21 @@ impl TuiApp {
         out
     }
 
-    pub fn file_rows(&self) -> Vec<(String, bool)> {
+    pub fn changes_items(&self) -> Vec<ChangesItem> {
         self.staged
             .iter()
-            .map(|e| (e.path.clone(), true))
-            .chain(self.unstaged.iter().map(|e| (e.path.clone(), false)))
+            .map(|e| ChangesItem::File(e.path.clone(), true))
+            .chain(
+                self.unstaged
+                    .iter()
+                    .map(|e| ChangesItem::File(e.path.clone(), false)),
+            )
+            .chain(self.stashes.iter().map(|s| ChangesItem::Stash(s.index)))
             .collect()
     }
 
     fn clamp_changes_cursor(&mut self) {
-        let n = self.staged.len() + self.unstaged.len();
+        let n = self.staged.len() + self.unstaged.len() + self.stashes.len();
         self.changes_cursor = self.changes_cursor.min(n.saturating_sub(1));
     }
 
@@ -545,12 +641,26 @@ impl TuiApp {
             self.quit = true;
             return;
         }
+        if self.seq.is_some() {
+            if queue.take(Modifiers::SHIFT, Key::C) {
+                self.seq_continue();
+                return;
+            }
+            if queue.take(Modifiers::SHIFT, Key::A) {
+                self.prompt = Some((Prompt::ConfirmSeqAbort, String::new()));
+                return;
+            }
+        }
         if self.focus == Pane::Changes && queue.take(Modifiers::NONE, Key::C) {
             self.prompt = Some((Prompt::Commit, String::new()));
             return;
         }
         if self.focus == Pane::Changes && queue.take(Modifiers::NONE, Key::A) {
             self.open_amend_prompt();
+            return;
+        }
+        if self.focus == Pane::Changes && queue.take(Modifiers::NONE, Key::Z) {
+            self.stash_push();
             return;
         }
 
@@ -791,6 +901,16 @@ impl TuiApp {
                     self.prompt = Some((Prompt::RenameBranch { from: from.clone() }, from));
                 }
             }
+            Prompt::StashOp { index } => match c {
+                'p' => self.take_prompt_and(|app| {
+                    app.run_stash_op(repo::stash_pop(&app.selected, index), "stash pop")
+                }),
+                'a' => self.take_prompt_and(|app| {
+                    app.run_stash_op(repo::stash_apply(&app.selected, index), "stash apply")
+                }),
+                'd' => self.prompt = Some((Prompt::ConfirmStashDrop { index }, String::new())),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -831,10 +951,18 @@ impl TuiApp {
             Prompt::ConfirmResetHard { oid } => self.run_reset(oid, repo::ResetMode::Hard),
             Prompt::ConfirmOp { op, oid } => self.run_graph_op(op, oid),
             Prompt::ConfirmDeleteRef { target } => self.run_delete_ref(&target),
+            Prompt::ConfirmForcePush { remote, refspec } => {
+                self.start_remote(RemoteKind::ForcePush, Some(remote), vec![refspec]);
+            }
+            Prompt::ConfirmSeqAbort => self.seq_abort(),
+            Prompt::ConfirmStashDrop { index } => {
+                self.run_stash_op(repo::stash_drop(&self.selected, index), "stash drop");
+            }
             Prompt::Reset { .. }
             | Prompt::Checkout { .. }
             | Prompt::DeleteRef { .. }
-            | Prompt::PickRenameBranch { .. } => {}
+            | Prompt::PickRenameBranch { .. }
+            | Prompt::StashOp { .. } => {}
         }
     }
 
@@ -892,10 +1020,7 @@ impl TuiApp {
         r: Result<repo::SeqOutcome, twig_core::git2::Error>,
     ) {
         match r {
-            Ok(repo::SeqOutcome::Done) => self.error = None,
-            Ok(repo::SeqOutcome::Conflicts(files)) => {
-                self.error = Some(format!("{what} stopped on conflicts: {}", files.join(", ")));
-            }
+            Ok(_) => self.error = None,
             Err(e) => self.error = Some(format!("{what} failed: {e}")),
         }
         self.refresh();
@@ -918,13 +1043,180 @@ impl TuiApp {
         let res = match target {
             RefTarget::Branch(name) => repo::delete_branch(&self.selected, name),
             RefTarget::Tag(name) => repo::delete_tag(&self.selected, name),
-            RefTarget::RemoteBranch(_) => return,
+            RefTarget::RemoteBranch(name) => {
+                let Some((remote, branch)) = name.split_once('/') else {
+                    self.error = Some(format!("invalid remote branch: {name}"));
+                    return;
+                };
+                let (remote, branch) = (remote.to_string(), branch.to_string());
+                self.start_remote(RemoteKind::DeleteRemote, Some(remote), vec![branch]);
+                return;
+            }
         };
         match res {
             Ok(()) => self.error = None,
             Err(e) => self.error = Some(format!("delete failed: {e}")),
         }
         self.refresh();
+    }
+
+    fn seq_continue(&mut self) {
+        let Some((kind, _)) = self.seq else {
+            return;
+        };
+        match kind {
+            repo::SeqState::RebaseInteractive => self.seq_git_shell("--continue"),
+            repo::SeqState::Rebase => {
+                let r = repo::rebase_continue(&self.selected);
+                self.apply_seq_outcome("rebase --continue", r);
+            }
+            repo::SeqState::CherryPick => {
+                let r = repo::cherry_pick_continue(&self.selected);
+                self.apply_seq_outcome("cherry-pick --continue", r);
+            }
+            repo::SeqState::Revert => {
+                let r = repo::revert_continue(&self.selected);
+                self.apply_seq_outcome("revert --continue", r);
+            }
+            repo::SeqState::Merge => {
+                let r = repo::merge_continue(&self.selected);
+                self.apply_seq_outcome("merge --continue", r);
+            }
+            repo::SeqState::None => {}
+        }
+    }
+
+    fn seq_abort(&mut self) {
+        let Some((kind, _)) = self.seq else {
+            return;
+        };
+        let res = match kind {
+            repo::SeqState::RebaseInteractive => {
+                self.seq_git_shell("--abort");
+                return;
+            }
+            repo::SeqState::Rebase => repo::rebase_abort(&self.selected),
+            repo::SeqState::CherryPick => repo::cherry_pick_abort(&self.selected),
+            repo::SeqState::Revert => repo::revert_abort(&self.selected),
+            repo::SeqState::Merge => repo::merge_abort(&self.selected),
+            repo::SeqState::None => return,
+        };
+        if let Err(e) = res {
+            self.error = Some(format!("abort failed: {e}"));
+        } else {
+            self.error = None;
+        }
+        self.refresh();
+    }
+
+    fn seq_git_shell(&mut self, arg: &str) {
+        self.pending_shell = Some(vec![
+            "git".to_string(),
+            "-C".to_string(),
+            self.selected.to_string_lossy().into_owned(),
+            "rebase".to_string(),
+            arg.to_string(),
+        ]);
+    }
+
+    fn push(&mut self, force: bool) {
+        let remote = repo::primary_remote(&self.selected);
+        let Some(refspec) = repo::head_push_refspec(&self.selected) else {
+            self.error = Some("not on a branch to push".to_string());
+            return;
+        };
+        if force {
+            let Some(remote) = remote else {
+                self.error = Some("no remote configured".to_string());
+                return;
+            };
+            self.prompt = Some((Prompt::ConfirmForcePush { remote, refspec }, String::new()));
+            return;
+        }
+        self.start_remote(RemoteKind::Push, remote, vec![refspec]);
+    }
+
+    fn start_remote(&mut self, kind: RemoteKind, remote: Option<String>, refspecs: Vec<String>) {
+        if self.remote.is_some() {
+            self.error = Some("a remote operation is already running".to_string());
+            return;
+        }
+        let Some(remote) = remote else {
+            self.error = Some("no remote configured".to_string());
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let path = self.selected.clone();
+        let refspecs = if kind == RemoteKind::ForcePush {
+            refspecs
+                .into_iter()
+                .map(|r| if r.starts_with('+') { r } else { format!("+{r}") })
+                .collect()
+        } else {
+            refspecs
+        };
+        std::thread::spawn(move || {
+            let ptx = tx.clone();
+            let progress = move |received, total| {
+                let _ = ptx.send(RemoteMsg::Progress(received, total));
+            };
+            let result = match kind {
+                RemoteKind::Fetch => {
+                    repo::fetch(&path, &remote, progress).map(|()| repo::SeqOutcome::Done)
+                }
+                RemoteKind::Pull => repo::pull(&path, &remote, progress),
+                RemoteKind::Push | RemoteKind::ForcePush => {
+                    repo::push(&path, &remote, &refspecs, progress).map(|()| repo::SeqOutcome::Done)
+                }
+                RemoteKind::DeleteRemote => {
+                    let branch = refspecs.first().cloned().unwrap_or_default();
+                    repo::delete_remote_branch(&path, &remote, &branch, progress)
+                        .map(|()| repo::SeqOutcome::Done)
+                }
+            };
+            let _ = tx.send(RemoteMsg::Done(result.map_err(|e| e.to_string())));
+        });
+        self.error = None;
+        self.remote = Some(RemoteJob {
+            kind,
+            progress: None,
+            rx,
+        });
+    }
+
+    pub fn poll_remote(&mut self) -> bool {
+        let Some(job) = self.remote.as_mut() else {
+            return false;
+        };
+        let mut dirty = false;
+        let mut done = None;
+        loop {
+            match job.rx.try_recv() {
+                Ok(RemoteMsg::Progress(received, total)) => {
+                    job.progress = Some((received, total));
+                    dirty = true;
+                }
+                Ok(RemoteMsg::Done(res)) => {
+                    done = Some(res);
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    done = Some(Err("remote worker exited unexpectedly".to_string()));
+                    break;
+                }
+            }
+        }
+        if let Some(res) = done {
+            let kind = self.remote.take().map(|j| j.kind).unwrap_or(RemoteKind::Fetch);
+            match res {
+                Ok(_) => self.error = None,
+                Err(e) => self.error = Some(format!("{} failed: {e}", kind.verb())),
+            }
+            self.refresh();
+            dirty = true;
+        }
+        dirty
     }
 
     fn run_commit(&mut self, msg: &str) {
@@ -1037,8 +1329,8 @@ impl TuiApp {
     }
 
     fn changes_keys(&mut self, queue: &mut KeyQueue) {
-        let files = self.file_rows();
-        let last = files.len().saturating_sub(1);
+        let items = self.changes_items();
+        let last = items.len().saturating_sub(1);
         let half = (self.changes_view_rows / 2).max(1);
         let actions = self
             .keymap
@@ -1056,23 +1348,40 @@ impl TuiApp {
                     self.changes_cursor = self.changes_cursor.saturating_sub(half)
                 }
                 Action::ChangesActivate | Action::ChangesExpand => {
-                    if let Some((path, staged)) = files.get(self.changes_cursor).cloned() {
-                        self.open_file_diff(path, staged);
-                        self.pending_focus_jump = self.error.is_none();
+                    match items.get(self.changes_cursor).cloned() {
+                        Some(ChangesItem::File(path, staged)) => {
+                            self.open_file_diff(path, staged);
+                            self.pending_focus_jump = self.error.is_none();
+                        }
+                        Some(ChangesItem::Stash(index)) => {
+                            if let Some(oid) =
+                                self.stashes.iter().find(|s| s.index == index).map(|s| s.oid)
+                            {
+                                self.open_commit_diff(oid);
+                                self.pending_focus_jump = self.error.is_none();
+                            }
+                        }
+                        None => {}
                     }
                 }
                 Action::ChangesStageToggle => {
-                    if let Some((path, staged)) = files.get(self.changes_cursor).cloned() {
-                        self.toggle_stage(&path, staged);
+                    match items.get(self.changes_cursor).cloned() {
+                        Some(ChangesItem::File(path, staged)) => self.toggle_stage(&path, staged),
+                        Some(ChangesItem::Stash(index)) => {
+                            self.prompt = Some((Prompt::StashOp { index }, String::new()));
+                        }
+                        None => {}
                     }
                 }
                 Action::ChangesEdit => {
-                    if let Some((path, _)) = files.get(self.changes_cursor) {
+                    if let Some(ChangesItem::File(path, _)) = items.get(self.changes_cursor) {
                         self.pending_editor = Some(self.selected.join(path));
                     }
                 }
                 Action::ChangesDiscard => {
-                    if let Some((path, false)) = files.get(self.changes_cursor).cloned() {
+                    if let Some(ChangesItem::File(path, false)) =
+                        items.get(self.changes_cursor).cloned()
+                    {
                         let mut paths = vec![path.clone()];
                         if let Some(old) = self
                             .unstaged
@@ -1091,6 +1400,26 @@ impl TuiApp {
                 _ => {}
             }
         }
+    }
+
+    fn stash_push(&mut self) {
+        if self.staged.is_empty() && self.unstaged.is_empty() {
+            self.error = Some("nothing to stash".to_string());
+            return;
+        }
+        match repo::stash_save(&self.selected, None) {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("stash failed: {e}")),
+        }
+        self.refresh();
+    }
+
+    fn run_stash_op(&mut self, r: Result<(), twig_core::git2::Error>, what: &str) {
+        match r {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("{what} failed: {e}")),
+        }
+        self.refresh();
     }
 
     fn toggle_stage(&mut self, path: &str, staged: bool) {
@@ -1273,6 +1602,10 @@ impl TuiApp {
                         | Action::GraphCheckout
                         | Action::GraphRenameBranch
                         | Action::GraphDeleteRef
+                        | Action::GraphFetch
+                        | Action::GraphPull
+                        | Action::GraphPush
+                        | Action::GraphForcePush
                 )
             });
         for a in actions {
@@ -1301,6 +1634,18 @@ impl TuiApp {
                 Action::GraphRenameBranch => self.graph_op_prompt(a),
                 Action::GraphDeleteRef => self.graph_op_prompt(a),
                 Action::GraphRebaseInteractive => self.interactive_rebase(),
+                Action::GraphFetch => {
+                    let remote = repo::primary_remote(&self.selected);
+                    self.start_remote(RemoteKind::Fetch, remote, Vec::new());
+                }
+                Action::GraphPull => {
+                    if !self.busy_with_seq() {
+                        let remote = repo::primary_remote(&self.selected);
+                        self.start_remote(RemoteKind::Pull, remote, Vec::new());
+                    }
+                }
+                Action::GraphPush => self.push(false),
+                Action::GraphForcePush => self.push(true),
                 _ => {}
             }
         }
@@ -1391,11 +1736,7 @@ impl TuiApp {
                 }
             }
             Action::GraphDeleteRef => {
-                let refs: Vec<RefTarget> = self
-                    .row_refs(row)
-                    .into_iter()
-                    .filter(|r| !matches!(r, RefTarget::RemoteBranch(_)))
-                    .collect();
+                let refs = self.row_refs(row);
                 match refs.len() {
                     0 => {
                         self.error = Some("no branch/tag on this commit".to_string());

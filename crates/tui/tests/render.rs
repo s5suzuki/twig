@@ -499,6 +499,160 @@ fn graph_interactive_rebase_requests_suspended_git() {
     assert_eq!(argv[5], format!("{head}^"));
 }
 
+fn wait_remote(app: &mut TuiApp) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.remote.is_some() {
+        app.poll_remote();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "remote operation timed out"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn stash_push_show_and_pop_via_prompts() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.handle_input(vec![key(KeyCode::Char('z'))]);
+    assert_eq!(app.stashes.len(), 1, "z stashes the worktree");
+    assert!(app.unstaged.is_empty());
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one\n");
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "Stashes (1)").is_some());
+
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    let lines = screen(&mut app, 140, 30);
+    let row = find_line(&lines, "two").expect("stash diff rendered");
+    assert!(row.contains("one"), "old content on the left: {row}");
+
+    app.focus = Pane::Changes;
+    app.handle_input(vec![key(KeyCode::Char(' '))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "(p)op / (a)pply / (d)rop").is_some(),
+        "space on a stash opens the op picker"
+    );
+    app.handle_input(vec![key(KeyCode::Char('p'))]);
+    assert!(app.stashes.is_empty(), "pop removes the stash");
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "two\n");
+}
+
+#[test]
+fn stash_drop_requires_confirmation() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.handle_input(vec![key(KeyCode::Char('z'))]);
+    app.handle_input(vec![key(KeyCode::Char(' ')), key(KeyCode::Char('d'))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "Drop stash@{0}? (y/n)").is_some());
+    app.handle_input(vec![key(KeyCode::Char('y'))]);
+    assert!(app.stashes.is_empty());
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one\n");
+}
+
+#[test]
+fn push_and_force_push_to_local_remote() {
+    let dir = temp_repo();
+    let origin = std::env::temp_dir().join(format!(
+        "twig-tui-origin-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    let _ = std::fs::remove_dir_all(&origin);
+    std::fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "-q", "--bare"]);
+
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    git(&dir, &["remote", "add", "origin", origin.to_str().unwrap()]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+
+    app.handle_input(vec![key(KeyCode::Char('p'))]);
+    assert!(app.remote.is_some(), "p starts a push job");
+    wait_remote(&mut app);
+    assert!(app.error.is_none(), "push ok: {:?}", app.error);
+    assert_eq!(
+        git_out(&origin, &["rev-parse", "main"]),
+        git_out(&dir, &["rev-parse", "HEAD"])
+    );
+
+    git(&dir, &["commit", "--amend", "-qm", "rewritten"]);
+    app.refresh();
+    app.handle_input(vec![KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT)]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "Force push current branch to origin? (y/n)").is_some(),
+        "force push asks first"
+    );
+    app.handle_input(vec![key(KeyCode::Char('y'))]);
+    wait_remote(&mut app);
+    assert!(app.error.is_none(), "force push ok: {:?}", app.error);
+    assert_eq!(
+        git_out(&origin, &["rev-parse", "main"]),
+        git_out(&dir, &["rev-parse", "HEAD"])
+    );
+    let _ = std::fs::remove_dir_all(&origin);
+}
+
+#[test]
+fn conflicted_cherry_pick_shows_banner_and_aborts() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "base\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "base"]);
+    git(&dir, &["checkout", "-qb", "feat"]);
+    std::fs::write(dir.join("a.txt"), "feat\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "feat change"]);
+    git(&dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("a.txt"), "main\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "main change"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    let feat_row = app
+        .graph
+        .rows
+        .iter()
+        .position(|r| r.summary == "feat change")
+        .expect("feat commit");
+    for _ in 0..feat_row {
+        app.handle_input(vec![key(KeyCode::Char('j'))]);
+    }
+    app.handle_input(vec![key(KeyCode::Char('y')), key(KeyCode::Char('y'))]);
+
+    assert!(
+        matches!(app.seq, Some((twig_core::repo::SeqState::CherryPick, _))),
+        "conflict leaves the sequencer active"
+    );
+    let lines = screen(&mut app, 140, 30);
+    let banner = find_line(&lines, "Cherry-pick in progress").expect("banner shown");
+    assert!(banner.contains("a.txt"), "conflict listed: {banner}");
+
+    app.handle_input(vec![KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "Abort the in-progress operation? (y/n)").is_some());
+    app.handle_input(vec![key(KeyCode::Char('y'))]);
+    assert!(app.seq.is_none(), "abort clears the sequencer");
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "main\n");
+}
+
 #[test]
 fn graph_expands_commit_files_and_opens_per_file_diff() {
     let dir = temp_repo();
