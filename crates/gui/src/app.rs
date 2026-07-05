@@ -1382,6 +1382,15 @@ impl App {
         self.restore_nav(next);
     }
 
+    pub fn hunk_index_at_cursor(&self) -> Option<usize> {
+        let rows = &self.diff.rows;
+        let cursor = self.diff_nav.cursor.min(rows.len().checked_sub(1)?);
+        (0..=cursor).rev().find_map(|i| match rows[i] {
+            repo::DiffRow::Hunk { index, .. } => Some(index),
+            _ => None,
+        })
+    }
+
     pub fn toggle_hunk(&mut self, hunk_index: usize) {
         if self.diff.rename {
             return;

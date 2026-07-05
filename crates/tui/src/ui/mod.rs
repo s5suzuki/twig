@@ -12,27 +12,51 @@ use crate::app::{Pane, Tab, TuiApp, View, ViewMode};
 pub const FOCUS_FG: Color = Color::Cyan;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
+    let mut area = frame.area();
+    if app.prompt.is_some() {
+        let parts = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
+        draw_prompt_bar(frame, app, parts[1]);
+        area = parts[0];
+    }
     match app.view_mode {
-        ViewMode::All => draw_all(frame, app),
-        ViewMode::Single(view) => draw_single(frame, app, view),
+        ViewMode::All => draw_all(frame, app, area),
+        ViewMode::Single(view) => draw_single(frame, app, view, area),
     }
 }
 
-fn draw_all(frame: &mut Frame, app: &mut TuiApp) {
+fn draw_prompt_bar(frame: &mut Frame, app: &TuiApp, area: Rect) {
+    let Some((kind, input)) = &app.prompt else {
+        return;
+    };
+    let mut spans = vec![Span::styled(
+        format!("{} ", kind.label()),
+        Style::default().fg(Color::Yellow),
+    )];
+    if kind.wants_text() {
+        spans.push(Span::raw(input.clone()));
+        spans.push(Span::styled("█", Style::default().fg(FOCUS_FG)));
+        spans.push(Span::styled(
+            "  (Enter: confirm / Esc: cancel)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_all(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let cols = Layout::horizontal([
         Constraint::Length(26),
         Constraint::Length(36),
         Constraint::Min(20),
     ])
-    .split(frame.area());
+    .split(area);
 
     draw_sidebar(frame, app, cols[0]);
     draw_changes(frame, app, cols[1]);
     draw_right(frame, app, cols[2]);
 }
 
-fn draw_single(frame: &mut Frame, app: &mut TuiApp, view: View) {
-    let mut area = frame.area();
+fn draw_single(frame: &mut Frame, app: &mut TuiApp, view: View, mut area: Rect) {
     if view != View::Changes
         && let Some(err) = &app.error
     {
@@ -91,48 +115,26 @@ fn draw_changes(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let commit_rows: u16 = if app.commit_input.is_some() { 2 } else { 1 };
     let parts = Layout::vertical([
-        Constraint::Length(commit_rows),
+        Constraint::Length(1),
         Constraint::Min(0),
         Constraint::Length(if app.error.is_some() { 1 } else { 0 }),
     ])
     .split(inner);
 
-    draw_commit_box(frame, app, parts[0]);
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            format!("c: commit / a: amend ({} staged)", app.staged.len()),
+            Style::default().fg(Color::DarkGray),
+        )),
+        parts[0],
+    );
     draw_change_list(frame, app, parts[1]);
     if let Some(err) = &app.error {
         frame.render_widget(
             Paragraph::new(Line::styled(err.clone(), Style::default().fg(Color::Red))),
             parts[2],
         );
-    }
-}
-
-fn draw_commit_box(frame: &mut Frame, app: &TuiApp, area: Rect) {
-    match &app.commit_input {
-        Some(text) => {
-            let lines = vec![
-                Line::styled(
-                    "Commit message (Enter: commit / Esc: cancel)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Line::from(vec![
-                    Span::raw(text.clone()),
-                    Span::styled("█", Style::default().fg(FOCUS_FG)),
-                ]),
-            ];
-            frame.render_widget(Paragraph::new(lines), area);
-        }
-        None => {
-            frame.render_widget(
-                Paragraph::new(Line::styled(
-                    format!("c: commit ({} staged)", app.staged.len()),
-                    Style::default().fg(Color::DarkGray),
-                )),
-                area,
-            );
-        }
     }
 }
 

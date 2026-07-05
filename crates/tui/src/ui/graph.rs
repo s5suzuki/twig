@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use twig_core::repo::{GraphRow, RefKind, Segment};
 
-use crate::app::{Pane, TuiApp};
+use crate::app::{GraphItem, Pane, TuiApp};
 
 const LANE_COLORS: [Color; 8] = [
     Color::Cyan,
@@ -26,33 +26,76 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let h = area.height as usize;
     let visible = h.div_ceil(2).max(1);
     app.graph_view_rows = visible;
-    if app.graph.rows.is_empty() || h == 0 {
+    let items = app.graph_items();
+    if items.is_empty() || h == 0 {
         return;
     }
 
-    let cursor = app.graph_cursor.min(app.graph_last());
+    let cursor = app.graph_cursor.min(items.len() - 1);
     if cursor < app.graph_scroll {
         app.graph_scroll = cursor;
     }
     if cursor >= app.graph_scroll + visible {
         app.graph_scroll = cursor + 1 - visible;
     }
+    app.graph_scroll = app.graph_scroll.min(items.len() - 1);
 
-    let end = (app.graph_scroll + visible).min(app.graph.rows.len());
     let mut lines: Vec<Line> = Vec::new();
-    for i in app.graph_scroll..end {
-        let row = &app.graph.rows[i];
+    for (i, item) in items.iter().enumerate().skip(app.graph_scroll) {
+        if lines.len() >= h {
+            break;
+        }
         let focused = app.focus == Pane::RightTab && i == cursor;
-        lines.push(render_row(row, app.graph.max_col, focused));
-        if i + 1 < app.graph.rows.len() {
-            lines.push(connector_row(row, app.graph.max_col));
+        let commit_row = match item {
+            GraphItem::Commit(r) => {
+                let row = &app.graph.rows[*r];
+                lines.push(render_row(row, app.graph.max_col, focused));
+                *r
+            }
+            GraphItem::File(k) => {
+                let r = parent_commit_row(&items, i, &app.graph.rows);
+                lines.push(file_row(app, *k, r, focused));
+                r.unwrap_or(0)
+            }
+        };
+        let next_is_file = matches!(items.get(i + 1), Some(GraphItem::File(_)));
+        if !next_is_file && commit_row + 1 < app.graph.rows.len() {
+            lines.push(connector_row(&app.graph.rows[commit_row], app.graph.max_col));
         }
     }
     lines.truncate(h);
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn connector_row(row: &GraphRow, max_col: usize) -> Line<'static> {
+fn parent_commit_row(items: &[GraphItem], from: usize, rows: &[GraphRow]) -> Option<usize> {
+    (0..=from.min(items.len() - 1)).rev().find_map(|i| match items[i] {
+        GraphItem::Commit(r) if r < rows.len() => Some(r),
+        _ => None,
+    })
+}
+
+fn file_row(app: &TuiApp, k: usize, commit_row: Option<usize>, focused: bool) -> Line<'static> {
+    let mut spans = match commit_row {
+        Some(r) => lane_spans(&app.graph.rows[r], app.graph.max_col),
+        None => vec![Span::raw(" ".repeat(app.graph.max_col * 2 + 1))],
+    };
+    spans.push(Span::raw("   "));
+    let Some(f) = app.commit_files.get(k) else {
+        return Line::from(spans);
+    };
+    let mut style = Style::default();
+    if focused {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+    spans.push(Span::styled(
+        format!("{} ", f.kind.marker()),
+        style.fg(Color::Yellow),
+    ));
+    spans.push(Span::styled(f.path.clone(), style));
+    Line::from(spans)
+}
+
+fn lane_spans(row: &GraphRow, max_col: usize) -> Vec<Span<'static>> {
     let mut cont: Vec<Option<usize>> = vec![None; max_col + 1];
     for seg in &row.segments {
         match *seg {
@@ -72,7 +115,11 @@ fn connector_row(row: &GraphRow, max_col: usize) -> Line<'static> {
             spans.push(Span::raw(" "));
         }
     }
-    Line::from(spans)
+    spans
+}
+
+fn connector_row(row: &GraphRow, max_col: usize) -> Line<'static> {
+    Line::from(lane_spans(row, max_col))
 }
 
 fn render_row(row: &GraphRow, max_col: usize, cursor: bool) -> Line<'static> {

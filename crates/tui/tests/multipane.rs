@@ -177,6 +177,41 @@ fn graph_pane_enter_shows_commit_diff_in_main_pane() {
 }
 
 #[test]
+fn graph_file_selection_shows_per_file_diff_in_main_pane() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "first\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "bee\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "second\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "boo\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "change both"]);
+
+    let sdir = temp_dir("session");
+    let mut graph = pane(&dir, &sdir, View::Graph);
+    let mut main = pane(&dir, &sdir, View::Main);
+    main.sync_session();
+
+    graph.handle_input(vec![key(KeyCode::Enter)]);
+    assert!(main.sync_session());
+    assert_eq!(main.selected_commit_file, None, "whole-commit diff first");
+
+    graph.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Enter)]);
+    assert_eq!(graph.selected_commit_file, Some("a.txt".to_string()));
+
+    assert!(main.sync_session());
+    assert_eq!(main.selected_commit_file, Some("a.txt".to_string()));
+    assert_eq!(main.active_tab, Tab::Diff);
+    let lines = screen(&mut main, 120, 30);
+    assert!(lines.iter().any(|l| l.contains("second")), "a.txt diff shown");
+    assert!(
+        !lines.iter().any(|l| l.contains("boo")),
+        "b.txt changes not in per-file diff"
+    );
+}
+
+#[test]
 fn sidebar_repo_switch_rescopes_other_panes() {
     let child = temp_repo();
     std::fs::write(child.join("c.txt"), "c\n").unwrap();

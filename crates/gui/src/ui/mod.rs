@@ -1582,6 +1582,22 @@ fn diff_keys(app: &mut App, ui: &mut egui::Ui) {
                     app.request_discard_selection();
                 }
             }
+            Action::DiffStageHunk => {
+                if !staged
+                    && !conflict
+                    && let Some(h) = app.hunk_index_at_cursor()
+                {
+                    app.toggle_hunk(h);
+                }
+            }
+            Action::DiffUnstageHunk => {
+                if staged
+                    && !conflict
+                    && let Some(h) = app.hunk_index_at_cursor()
+                {
+                    app.toggle_hunk(h);
+                }
+            }
             Action::DiffHalfPageDown => app.scroll_diff(0.5, true),
             Action::DiffHalfPageUp => app.scroll_diff(0.5, false),
             Action::DiffPageDown => app.scroll_diff(1.0, true),

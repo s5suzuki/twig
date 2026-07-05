@@ -7,7 +7,7 @@ use twig_core::diffnav::DiffNavState;
 use twig_core::git2::Oid;
 use twig_core::highlight::DiffHighlighter;
 use twig_core::keymap::{Action, Chord, Context, Key, Keymap, Modifiers};
-use twig_core::repo::{self, FileDiff, Graph, RepoNode, StatusEntry};
+use twig_core::repo::{self, CommitFile, FileDiff, Graph, RepoNode, StatusEntry};
 
 use crate::keys::{self, KeyQueue};
 use crate::session::{Session, SharedState};
@@ -71,6 +71,51 @@ fn fixed_focus(view: View) -> Pane {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Prompt {
+    Commit,
+    Amend,
+    ConfirmAmendPushed,
+    ConfirmDiscardFiles { paths: Vec<String>, label: String },
+    ConfirmDiscardLines { path: String, lo: usize, hi: usize },
+}
+
+impl Prompt {
+    pub fn wants_text(&self) -> bool {
+        matches!(self, Prompt::Commit | Prompt::Amend)
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Prompt::Commit => "Commit message:".to_string(),
+            Prompt::Amend => "Amend message:".to_string(),
+            Prompt::ConfirmAmendPushed => {
+                "HEAD is already pushed. Amend anyway? (y/n)".to_string()
+            }
+            Prompt::ConfirmDiscardFiles { label, .. } => {
+                format!("Discard changes to {label}? (y/n)")
+            }
+            Prompt::ConfirmDiscardLines { path, .. } => {
+                format!("Discard selected lines in {path}? (y/n)")
+            }
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum GraphItem {
+    Commit(usize),
+    File(usize),
+}
+
+type Snapshot = (
+    PathBuf,
+    Option<(String, bool)>,
+    Option<Oid>,
+    Option<String>,
+    Tab,
+);
+
 pub struct TuiApp {
     pub root: RepoNode,
     pub selected: PathBuf,
@@ -95,6 +140,8 @@ pub struct TuiApp {
 
     pub selected_file: Option<(String, bool)>,
     pub selected_commit: Option<Oid>,
+    pub selected_commit_file: Option<String>,
+    pub commit_files: Vec<CommitFile>,
     pub diff: FileDiff,
     pub diff_nav: DiffNavState,
     pub diff_scroll: usize,
@@ -108,7 +155,7 @@ pub struct TuiApp {
     pub graph_scroll: usize,
     pub graph_view_rows: usize,
 
-    pub commit_input: Option<String>,
+    pub prompt: Option<(Prompt, String)>,
     pub pending_editor: Option<PathBuf>,
     pub pending_copy: Option<String>,
     pub pending_focus_jump: bool,
@@ -158,6 +205,8 @@ impl TuiApp {
             changes_view_rows: 20,
             selected_file: None,
             selected_commit: None,
+            selected_commit_file: None,
+            commit_files: Vec::new(),
             diff: FileDiff::empty(),
             diff_nav: DiffNavState::default(),
             diff_scroll: 0,
@@ -169,7 +218,7 @@ impl TuiApp {
             graph_cursor: 0,
             graph_scroll: 0,
             graph_view_rows: 20,
-            commit_input: None,
+            prompt: None,
             pending_editor: None,
             pending_copy: None,
             pending_focus_jump: false,
@@ -191,6 +240,14 @@ impl TuiApp {
                 self.graph_cursor = self.graph_cursor.min(self.graph_last());
             }
             Err(e) => self.error = Some(format!("graph failed: {e}")),
+        }
+        if let Some(oid) = self.selected_commit
+            && !self.graph.rows.iter().any(|r| r.id == oid)
+        {
+            self.selected_commit = None;
+            self.selected_commit_file = None;
+            self.commit_files.clear();
+            self.graph_cursor = self.graph_cursor.min(self.graph_last());
         }
         self.clamp_changes_cursor();
         if let Some((path, staged)) = self.selected_file.clone() {
@@ -217,8 +274,21 @@ impl TuiApp {
         self.changes_cursor = self.changes_cursor.min(n.saturating_sub(1));
     }
 
+    pub fn graph_items(&self) -> Vec<GraphItem> {
+        let mut out = Vec::with_capacity(self.graph.rows.len() + self.commit_files.len());
+        for (i, row) in self.graph.rows.iter().enumerate() {
+            out.push(GraphItem::Commit(i));
+            if self.selected_commit == Some(row.id) {
+                for k in 0..self.commit_files.len() {
+                    out.push(GraphItem::File(k));
+                }
+            }
+        }
+        out
+    }
+
     pub fn graph_last(&self) -> usize {
-        self.graph.rows.len().saturating_sub(1)
+        self.graph_items().len().saturating_sub(1)
     }
 
     fn select_repo(&mut self, path: PathBuf) {
@@ -228,6 +298,8 @@ impl TuiApp {
         self.selected = path;
         self.selected_file = None;
         self.selected_commit = None;
+        self.selected_commit_file = None;
+        self.commit_files.clear();
         self.diff = FileDiff::empty();
         self.diff_hl = DiffHighlighter::default();
         self.diff_sig = 0;
@@ -246,6 +318,8 @@ impl TuiApp {
                 self.diff = d;
                 self.selected_file = Some((path.clone(), staged));
                 self.selected_commit = None;
+                self.selected_commit_file = None;
+                self.commit_files.clear();
                 self.rebuild_highlight(&path);
                 self.diff_nav.reset();
                 self.diff_nav.first_hunk(&self.diff.rows);
@@ -283,6 +357,8 @@ impl TuiApp {
             Ok(d) => {
                 self.diff = d;
                 self.selected_commit = Some(oid);
+                self.selected_commit_file = None;
+                self.commit_files = repo::commit_files(&self.selected, oid).unwrap_or_default();
                 self.selected_file = None;
                 self.rebuild_highlight("");
                 self.diff_nav.reset();
@@ -297,6 +373,41 @@ impl TuiApp {
         }
     }
 
+    fn open_commit_file_diff(&mut self, oid: Oid, path: String) {
+        match repo::commit_file_diff(&self.selected, oid, &path) {
+            Ok(d) => {
+                self.diff = d;
+                self.selected_commit = Some(oid);
+                self.selected_commit_file = Some(path.clone());
+                if self.commit_files.is_empty() {
+                    self.commit_files =
+                        repo::commit_files(&self.selected, oid).unwrap_or_default();
+                }
+                self.selected_file = None;
+                self.rebuild_highlight(&path);
+                self.diff_nav.reset();
+                self.diff_nav.first_hunk(&self.diff.rows);
+                self.diff_scroll = 0;
+                self.diff_center = true;
+                self.active_tab = Tab::Diff;
+                self.focus = Pane::RightTab;
+                self.error = None;
+            }
+            Err(e) => self.error = Some(format!("commit file diff failed: {e}")),
+        }
+    }
+
+    fn collapse_commit(&mut self) {
+        self.selected_commit = None;
+        self.selected_commit_file = None;
+        self.commit_files.clear();
+        self.diff = FileDiff::empty();
+        self.diff_hl = DiffHighlighter::default();
+        self.diff_sig = 0;
+        self.diff_nav.reset();
+        self.diff_scroll = 0;
+    }
+
     fn rebuild_highlight(&mut self, path: &str) {
         self.diff_sig = repo::hash_rows(&self.diff.rows);
         self.diff_hl = DiffHighlighter::new(path, &self.diff.rows, true);
@@ -307,8 +418,8 @@ impl TuiApp {
             if self.quit {
                 return;
             }
-            if self.commit_input.is_some() {
-                self.handle_commit_key(ev);
+            if self.prompt.is_some() {
+                self.handle_prompt_key(ev);
             } else if let Some(nk) = keys::normalize(&ev) {
                 self.handle_key(nk);
             }
@@ -323,7 +434,11 @@ impl TuiApp {
             return;
         }
         if self.focus == Pane::Changes && queue.take(Modifiers::NONE, Key::C) {
-            self.commit_input = Some(String::new());
+            self.prompt = Some((Prompt::Commit, String::new()));
+            return;
+        }
+        if self.focus == Pane::Changes && queue.take(Modifiers::NONE, Key::A) {
+            self.open_amend_prompt();
             return;
         }
 
@@ -404,11 +519,12 @@ impl TuiApp {
         }
     }
 
-    fn selection_snapshot(&self) -> (PathBuf, Option<(String, bool)>, Option<Oid>, Tab) {
+    fn selection_snapshot(&self) -> Snapshot {
         (
             self.selected.clone(),
             self.selected_file.clone(),
             self.selected_commit,
+            self.selected_commit_file.clone(),
             self.active_tab,
         )
     }
@@ -417,12 +533,14 @@ impl TuiApp {
         let repo = self.selected.clone();
         let file = self.selected_file.clone();
         let commit = self.selected_commit.map(|o| o.to_string());
+        let commit_file = self.selected_commit_file.clone();
         let tab = self.active_tab;
         if let Some(sess) = self.session.as_mut() {
             sess.publish(|st| {
                 st.selected_repo = repo;
                 st.selected_file = file;
                 st.selected_commit = commit;
+                st.selected_commit_file = commit_file;
                 st.active_tab = tab;
             });
         }
@@ -436,10 +554,14 @@ impl TuiApp {
         if matches!(self.view_mode, ViewMode::Single(View::Main | View::Diff)) {
             let cur_commit = self.selected_commit.map(|o| o.to_string());
             if let Some(hex) = &st.selected_commit {
-                if st.selected_commit != cur_commit
+                if (st.selected_commit != cur_commit
+                    || st.selected_commit_file != self.selected_commit_file)
                     && let Ok(oid) = Oid::from_str(hex)
                 {
-                    self.open_commit_diff(oid);
+                    match &st.selected_commit_file {
+                        Some(path) => self.open_commit_file_diff(oid, path.clone()),
+                        None => self.open_commit_diff(oid),
+                    }
                 }
             } else if let Some((path, staged)) = &st.selected_file {
                 if st.selected_file != self.selected_file {
@@ -448,6 +570,8 @@ impl TuiApp {
             } else if self.selected_file.is_some() || self.selected_commit.is_some() {
                 self.selected_file = None;
                 self.selected_commit = None;
+                self.selected_commit_file = None;
+                self.commit_files.clear();
                 self.diff = FileDiff::empty();
                 self.diff_nav.reset();
                 self.diff_scroll = 0;
@@ -483,36 +607,71 @@ impl TuiApp {
         dirty
     }
 
-    fn handle_commit_key(&mut self, ev: KeyEvent) {
+    fn handle_prompt_key(&mut self, ev: KeyEvent) {
         if ev.kind == KeyEventKind::Release {
             return;
         }
-        let Some(input) = self.commit_input.as_mut() else {
+        let Some((kind, input)) = self.prompt.as_mut() else {
             return;
         };
-        match ev.code {
-            KeyCode::Esc => self.commit_input = None,
-            KeyCode::Enter => self.run_commit(),
-            KeyCode::Backspace => {
-                input.pop();
-            }
-            KeyCode::Char(c) => {
-                if ev.modifiers.contains(KeyModifiers::CONTROL) {
-                    if c == 'c' {
-                        self.commit_input = None;
-                    }
-                } else {
-                    input.push(c);
+        if kind.wants_text() {
+            match ev.code {
+                KeyCode::Esc => self.prompt = None,
+                KeyCode::Enter => self.submit_prompt(),
+                KeyCode::Backspace => {
+                    input.pop();
                 }
+                KeyCode::Char(c) => {
+                    if ev.modifiers.contains(KeyModifiers::CONTROL) {
+                        if c == 'c' {
+                            self.prompt = None;
+                        }
+                    } else {
+                        input.push(c);
+                    }
+                }
+                _ => {}
             }
-            _ => {}
+        } else {
+            match ev.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => self.submit_prompt(),
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => self.prompt = None,
+                KeyCode::Char(c)
+                    if c == 'c' && ev.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    self.prompt = None
+                }
+                _ => {}
+            }
         }
     }
 
-    fn run_commit(&mut self) {
-        let msg = self.commit_input.take().unwrap_or_default();
+    fn submit_prompt(&mut self) {
+        let Some((kind, input)) = self.prompt.take() else {
+            return;
+        };
+        match kind {
+            Prompt::Commit => self.run_commit(&input),
+            Prompt::Amend => {
+                if input.trim().is_empty() {
+                    return;
+                }
+                if repo::head_is_pushed(&self.selected) {
+                    self.prompt = Some((Prompt::ConfirmAmendPushed, input));
+                } else {
+                    self.run_amend(&input);
+                }
+            }
+            Prompt::ConfirmAmendPushed => self.run_amend(&input),
+            Prompt::ConfirmDiscardFiles { paths, .. } => self.run_discard_files(&paths),
+            Prompt::ConfirmDiscardLines { path, lo, hi } => self.run_discard_lines(&path, lo, hi),
+        }
+    }
+
+    fn run_commit(&mut self, msg: &str) {
         let msg = msg.trim();
         if msg.is_empty() {
+            self.prompt = Some((Prompt::Commit, String::new()));
             return;
         }
         if self.staged.is_empty() {
@@ -527,6 +686,52 @@ impl TuiApp {
             }
             Err(e) => self.error = Some(format!("commit failed: {e}")),
         }
+    }
+
+    fn open_amend_prompt(&mut self) {
+        if repo::seq_state(&self.selected) != repo::SeqState::None {
+            self.error = Some("finish or abort the in-progress operation first".to_string());
+            return;
+        }
+        if !repo::head_has_commit(&self.selected) {
+            self.error = Some("nothing to amend".to_string());
+            return;
+        }
+        let msg = repo::head_message(&self.selected)
+            .map(|m| m.trim_end().to_string())
+            .unwrap_or_default();
+        self.prompt = Some((Prompt::Amend, msg));
+    }
+
+    fn run_amend(&mut self, msg: &str) {
+        match repo::amend(&self.selected, Some(msg.trim())) {
+            Ok(_) => {
+                self.auto_stage_pointer();
+                self.refresh();
+                self.error = None;
+            }
+            Err(e) => self.error = Some(format!("amend failed: {e}")),
+        }
+    }
+
+    fn run_discard_files(&mut self, paths: &[String]) {
+        match repo::discard(&self.selected, paths) {
+            Ok(()) => {
+                self.refresh();
+                self.error = None;
+            }
+            Err(e) => self.error = Some(format!("discard failed: {e}")),
+        }
+    }
+
+    fn run_discard_lines(&mut self, path: &str, lo: usize, hi: usize) {
+        if let Err(e) = repo::discard_partial(&self.selected, path, &self.diff.rows, lo, hi) {
+            self.error = Some(format!("discard failed: {e}"));
+        } else {
+            self.error = None;
+        }
+        self.diff_nav.anchor = None;
+        self.refresh();
     }
 
     fn auto_stage_pointer(&mut self) {
@@ -600,6 +805,23 @@ impl TuiApp {
                         self.pending_editor = Some(self.selected.join(path));
                     }
                 }
+                Action::ChangesDiscard => {
+                    if let Some((path, false)) = files.get(self.changes_cursor).cloned() {
+                        let mut paths = vec![path.clone()];
+                        if let Some(old) = self
+                            .unstaged
+                            .iter()
+                            .find(|e| e.path == path)
+                            .and_then(|e| e.old_path.clone())
+                        {
+                            paths.push(old);
+                        }
+                        self.prompt = Some((
+                            Prompt::ConfirmDiscardFiles { paths, label: path },
+                            String::new(),
+                        ));
+                    }
+                }
                 _ => {}
             }
         }
@@ -625,13 +847,7 @@ impl TuiApp {
         let actions = self
             .keymap
             .resolve(queue, Context::Diff, &mut self.pending_prefix, |a| {
-                !matches!(
-                    a,
-                    Action::DiffFind
-                        | Action::DiffStageSelection
-                        | Action::DiffUnstageSelection
-                        | Action::DiffDiscardSelection
-                )
+                !matches!(a, Action::DiffFind)
             });
         let rows_len = self.diff.rows.len();
         for a in actions {
@@ -681,13 +897,91 @@ impl TuiApp {
                         self.pending_editor = Some(self.selected.join(path));
                     }
                 }
+                Action::DiffStageSelection => self.apply_line_selection(false),
+                Action::DiffUnstageSelection => self.apply_line_selection(true),
+                Action::DiffDiscardSelection => self.request_discard_selection(),
+                Action::DiffStageHunk => self.apply_hunk_at_cursor(false),
+                Action::DiffUnstageHunk => self.apply_hunk_at_cursor(true),
                 _ => {}
             }
         }
     }
 
+    fn worktree_diff_target(&self, want_staged: bool) -> Option<String> {
+        if self.diff.conflict || self.diff.rename {
+            return None;
+        }
+        match &self.selected_file {
+            Some((path, staged)) if *staged == want_staged => Some(path.clone()),
+            _ => None,
+        }
+    }
+
+    fn apply_line_selection(&mut self, unstage: bool) {
+        let Some(path) = self.worktree_diff_target(unstage) else {
+            return;
+        };
+        let Some((lo, hi)) = self.diff_nav.action_range(&self.diff.rows) else {
+            return;
+        };
+        if let Err(e) = repo::apply_partial(&self.selected, &path, &self.diff.rows, lo, hi, unstage)
+        {
+            self.error = Some(format!("partial stage failed: {e}"));
+        } else {
+            self.error = None;
+        }
+        self.diff_nav.anchor = None;
+        self.refresh();
+    }
+
+    fn request_discard_selection(&mut self) {
+        let Some(path) = self.worktree_diff_target(false) else {
+            return;
+        };
+        let Some((lo, hi)) = self.diff_nav.action_range(&self.diff.rows) else {
+            return;
+        };
+        self.prompt = Some((Prompt::ConfirmDiscardLines { path, lo, hi }, String::new()));
+    }
+
+    fn apply_hunk_at_cursor(&mut self, unstage: bool) {
+        let Some(path) = self.worktree_diff_target(unstage) else {
+            return;
+        };
+        let Some((lo, hi)) = self.hunk_range_at_cursor() else {
+            return;
+        };
+        if let Err(e) = repo::apply_partial(&self.selected, &path, &self.diff.rows, lo, hi, unstage)
+        {
+            self.error = Some(format!("hunk stage failed: {e}"));
+        } else {
+            self.error = None;
+        }
+        self.diff_nav.anchor = None;
+        self.refresh();
+    }
+
+    fn hunk_range_at_cursor(&self) -> Option<(usize, usize)> {
+        let rows = &self.diff.rows;
+        if rows.is_empty() {
+            return None;
+        }
+        let cursor = self.diff_nav.cursor.min(rows.len() - 1);
+        let is_boundary =
+            |r: &repo::DiffRow| matches!(r, repo::DiffRow::Hunk { .. } | repo::DiffRow::FileHeader(_));
+        if rows.iter().any(|r| matches!(r, repo::DiffRow::Hunk { .. })) {
+            let lo = (0..=cursor).rev().find(|&i| is_boundary(&rows[i]))? + 1;
+            let hi = (cursor + 1..rows.len())
+                .find(|&i| is_boundary(&rows[i]))
+                .unwrap_or(rows.len())
+                - 1;
+            (lo <= hi).then_some((lo, hi))
+        } else {
+            Some((0, rows.len() - 1))
+        }
+    }
+
     fn graph_keys(&mut self, queue: &mut KeyQueue) {
-        let last = self.graph_last();
         let half = (self.graph_view_rows / 2).max(1);
         let actions = self
             .keymap
@@ -701,9 +995,11 @@ impl TuiApp {
                         | Action::GraphHalfPageDown
                         | Action::GraphHalfPageUp
                         | Action::GraphOpen
+                        | Action::GraphCollapse
                 )
             });
         for a in actions {
+            let last = self.graph_last();
             match a {
                 Action::GraphDown => self.graph_cursor = (self.graph_cursor + 1).min(last),
                 Action::GraphUp => self.graph_cursor = self.graph_cursor.saturating_sub(1),
@@ -715,16 +1011,69 @@ impl TuiApp {
                 Action::GraphHalfPageUp => {
                     self.graph_cursor = self.graph_cursor.saturating_sub(half)
                 }
-                Action::GraphOpen => {
-                    if let Some(row) = self.graph.rows.get(self.graph_cursor)
-                        && !row.is_uncommitted
-                    {
-                        self.open_commit_diff(row.id);
-                        self.pending_focus_jump = self.error.is_none();
-                    }
-                }
+                Action::GraphOpen => self.graph_open(),
+                Action::GraphCollapse => self.graph_collapse(),
                 _ => {}
             }
+        }
+    }
+
+    fn graph_open(&mut self) {
+        let items = self.graph_items();
+        match items.get(self.graph_cursor.min(items.len().saturating_sub(1))) {
+            Some(GraphItem::Commit(row)) => {
+                let row = &self.graph.rows[*row];
+                if row.is_uncommitted {
+                    return;
+                }
+                if self.selected_commit == Some(row.id) && self.selected_commit_file.is_none() {
+                    self.collapse_commit();
+                    return;
+                }
+                let oid = row.id;
+                self.open_commit_diff(oid);
+                if self.error.is_none() {
+                    self.set_graph_cursor_to_commit(oid);
+                    self.pending_focus_jump = true;
+                }
+            }
+            Some(GraphItem::File(k)) => {
+                if let (Some(oid), Some(f)) = (self.selected_commit, self.commit_files.get(*k)) {
+                    let path = f.path.clone();
+                    self.open_commit_file_diff(oid, path);
+                    self.pending_focus_jump = self.error.is_none();
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn graph_collapse(&mut self) {
+        let items = self.graph_items();
+        let cursor = self.graph_cursor.min(items.len().saturating_sub(1));
+        match items.get(cursor) {
+            Some(GraphItem::File(_)) => {
+                if let Some(ci) = (0..=cursor)
+                    .rev()
+                    .find(|&i| matches!(items[i], GraphItem::Commit(_)))
+                {
+                    self.graph_cursor = ci;
+                }
+            }
+            Some(GraphItem::Commit(row))
+                if self.selected_commit == Some(self.graph.rows[*row].id) =>
+            {
+                self.collapse_commit();
+            }
+            _ => {}
+        }
+    }
+
+    fn set_graph_cursor_to_commit(&mut self, oid: Oid) {
+        if let Some(idx) = self.graph_items().iter().position(
+            |it| matches!(it, GraphItem::Commit(r) if self.graph.rows[*r].id == oid),
+        ) {
+            self.graph_cursor = idx;
         }
     }
 

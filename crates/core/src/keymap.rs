@@ -243,6 +243,8 @@ pub enum Action {
     DiffStageSelection,
     DiffUnstageSelection,
     DiffDiscardSelection,
+    DiffStageHunk,
+    DiffUnstageHunk,
     DiffHalfPageDown,
     DiffHalfPageUp,
     DiffPageDown,
@@ -377,6 +379,16 @@ impl Action {
             Action::DiffDiscardSelection,
             "diff-discard-selection",
             "Discard the selected lines from the working tree",
+        ),
+        (
+            Action::DiffStageHunk,
+            "diff-stage-hunk",
+            "Stage the hunk under the cursor",
+        ),
+        (
+            Action::DiffUnstageHunk,
+            "diff-unstage-hunk",
+            "Unstage the hunk under the cursor",
         ),
         (
             Action::DiffHalfPageDown,
@@ -780,6 +792,8 @@ impl Keymap {
         km.push(Diff, n, S, DiffStageSelection);
         km.push(Diff, n, U, DiffUnstageSelection);
         km.push(Diff, n, D, DiffDiscardSelection);
+        km.push(Diff, shift, S, DiffStageHunk);
+        km.push(Diff, shift, U, DiffUnstageHunk);
         km.push(Diff, ctrl, D, DiffHalfPageDown);
         km.push(Diff, ctrl, U, DiffHalfPageUp);
         km.push(Diff, ctrl, F, DiffPageDown);

@@ -11,6 +11,8 @@ pub struct SharedState {
     pub selected_repo: PathBuf,
     pub selected_file: Option<(String, bool)>,
     pub selected_commit: Option<String>,
+    #[serde(default)]
+    pub selected_commit_file: Option<String>,
     pub active_tab: Tab,
     pub quit: bool,
     pub panes: BTreeMap<String, u32>,
@@ -25,6 +27,7 @@ impl SharedState {
             selected_repo: repo.to_path_buf(),
             selected_file: None,
             selected_commit: None,
+            selected_commit_file: None,
             active_tab: Tab::Graph,
             quit: false,
             panes: BTreeMap::new(),
