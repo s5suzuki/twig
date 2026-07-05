@@ -515,9 +515,13 @@ fn graph_expands_commit_files_and_opens_per_file_diff() {
     app.handle_input(vec![key(KeyCode::Enter)]);
     assert!(app.selected_commit.is_some(), "enter selects head commit");
     assert_eq!(app.commit_files.len(), 1);
-    assert_eq!(app.active_tab, Tab::Diff, "whole-commit diff opens");
+    assert_eq!(
+        app.active_tab,
+        Tab::Graph,
+        "stays on graph to pick a file; whole-commit diff loads in background"
+    );
+    assert!(!app.diff.rows.is_empty(), "whole-commit diff loaded");
 
-    app.active_tab = Tab::Graph;
     let lines = screen(&mut app, 140, 30);
     let commit_idx = lines
         .iter()
@@ -545,7 +549,7 @@ fn graph_expands_commit_files_and_opens_per_file_diff() {
     );
     app.handle_input(vec![key(KeyCode::Enter)]);
     assert_eq!(app.selected_commit_file, None, "enter reopens whole-commit diff");
-    app.active_tab = Tab::Graph;
+    assert_eq!(app.active_tab, Tab::Graph, "still on graph after reopening");
     app.handle_input(vec![key(KeyCode::Enter)]);
     assert!(app.selected_commit.is_none(), "second enter collapses");
     assert!(app.commit_files.is_empty());

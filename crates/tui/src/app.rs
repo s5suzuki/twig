@@ -1465,7 +1465,12 @@ impl TuiApp {
                 self.open_commit_diff(oid);
                 if self.error.is_none() {
                     self.set_graph_cursor_to_commit(oid);
-                    self.pending_focus_jump = true;
+                    if matches!(
+                        self.view_mode,
+                        ViewMode::All | ViewMode::Single(View::Main)
+                    ) {
+                        self.active_tab = Tab::Graph;
+                    }
                 }
             }
             Some(GraphItem::File(k)) => {
