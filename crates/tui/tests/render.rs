@@ -654,6 +654,151 @@ fn conflicted_cherry_pick_shows_banner_and_aborts() {
 }
 
 #[test]
+fn search_tab_finds_and_replaces_across_repo() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "hello needle world\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "no match here\nneedle again\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    app.active_tab = Tab::Search;
+
+    app.handle_input(vec![key(KeyCode::Char('/'))]);
+    assert!(app.prompt.is_some(), "/ opens the search prompt");
+    type_text(&mut app, "needle");
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert_eq!(app.search.hits.len(), 2, "both files hit");
+    assert_eq!(app.search.match_count(), 2);
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "2 matches in 2 files").is_some());
+    assert!(find_line(&lines, "needle again").is_some());
+
+    app.handle_input(vec![key(KeyCode::Char('r'))]);
+    type_text(&mut app, "thread");
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "Replace all matches with \"thread\"? (y/n)").is_some(),
+        "replace asks for confirmation"
+    );
+    app.handle_input(vec![key(KeyCode::Char('y'))]);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "hello thread world\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "no match here\nthread again\n"
+    );
+    assert!(app.search.hits.is_empty(), "results refreshed after replace");
+}
+
+#[test]
+fn diff_find_jumps_and_highlights() {
+    let dir = two_hunk_repo();
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert_eq!(app.active_tab, Tab::Diff);
+
+    app.handle_input(vec![key(KeyCode::Char('/'))]);
+    assert!(app.prompt.is_some(), "/ opens find prompt in diff");
+    type_text(&mut app, "line18v2");
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    let row = &app.diff.rows[app.diff_nav.cursor];
+    let hit = match row {
+        twig_core::repo::DiffRow::Line { right, .. } => {
+            right.as_deref().unwrap_or("").contains("line18v2")
+        }
+        _ => false,
+    };
+    assert!(hit, "cursor jumped to the match");
+
+    let before = app.diff_nav.cursor;
+    app.handle_input(vec![key(KeyCode::Char('n'))]);
+    assert_eq!(app.diff_nav.cursor, before, "single match wraps to itself");
+
+    app.handle_input(vec![key(KeyCode::Esc)]);
+    assert!(app.diff_find.is_none(), "esc clears the find query");
+}
+
+#[test]
+fn help_overlay_toggles_without_quitting() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.handle_input(vec![key(KeyCode::Char('?'))]);
+    assert!(app.help_open);
+    let lines = screen(&mut app, 140, 40);
+    assert!(find_line(&lines, "Keybindings").is_some());
+    assert!(find_line(&lines, "Stage/unstage the item under the cursor").is_some());
+
+    app.handle_input(vec![key(KeyCode::Char('q'))]);
+    assert!(!app.help_open, "q closes the help overlay");
+    assert!(!app.quit, "q inside help must not quit the app");
+}
+
+#[test]
+fn sidebar_initializes_submodule_via_prompt() {
+    let child = temp_repo();
+    std::fs::write(child.join("c.txt"), "c\n").unwrap();
+    git(&child, &["add", "-A"]);
+    git(&child, &["commit", "-qm", "child init"]);
+
+    let parent = temp_repo();
+    std::fs::write(parent.join("p.txt"), "p\n").unwrap();
+    git(&parent, &["add", "-A"]);
+    git(&parent, &["commit", "-qm", "parent init"]);
+    git(
+        &parent,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            child.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git(&parent, &["commit", "-qm", "add submodule"]);
+
+    let clone = std::env::temp_dir().join(format!(
+        "twig-tui-clone-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    let _ = std::fs::remove_dir_all(&clone);
+    git(
+        &parent,
+        &["clone", "-q", parent.to_str().unwrap(), clone.to_str().unwrap()],
+    );
+
+    let mut app = TuiApp::new(&clone).unwrap();
+    app.focus = Pane::Sidebar;
+    let rows = app.sidebar_rows();
+    assert_eq!(rows.len(), 2, "clone shows the submodule row");
+    assert!(!rows[1].initialized, "submodule starts uninitialized");
+
+    app.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Char('i'))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "Initialize submodule sub (clone)? (y/n)").is_some(),
+        "init asks for confirmation"
+    );
+    app.handle_input(vec![key(KeyCode::Char('y'))]);
+    wait_remote(&mut app);
+    assert!(app.error.is_none(), "init ok: {:?}", app.error);
+    let rows = app.sidebar_rows();
+    assert!(rows[1].initialized, "rediscover marks the submodule ready");
+    assert!(clone.join("sub/c.txt").exists(), "submodule cloned");
+    let _ = std::fs::remove_dir_all(&clone);
+}
+
+#[test]
 fn graph_expands_commit_files_and_opens_per_file_diff() {
     let dir = temp_repo();
     std::fs::write(dir.join("a.txt"), "first\n").unwrap();

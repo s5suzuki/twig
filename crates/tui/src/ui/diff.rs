@@ -20,6 +20,7 @@ const DEL_EMPH: Color = Color::Rgb(0x7a, 0x28, 0x35);
 const HUNK_FG: Color = Color::Rgb(0x6c, 0x9c, 0xff);
 const NO_FG: Color = Color::Rgb(110, 110, 110);
 const SEL_BG: Color = Color::Rgb(0x2c, 0x33, 0x4d);
+const FIND_BG: Color = Color::Rgb(0x6b, 0x5a, 0x10);
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     if let Some(note) = &app.diff.note {
@@ -143,12 +144,17 @@ fn render_row(
             };
             let overlay = if selected { Some(SEL_BG) } else { None };
 
+            let find = |text: Option<&str>| match (&app.diff_find, text) {
+                (Some(q), Some(t)) => crate::app::find_ranges(q, t),
+                _ => Vec::new(),
+            };
             let mut spans = vec![gutter];
             spans.push(lineno_span(*old_no, digits));
             spans.extend(cell_spans(
                 left.as_deref(),
                 app.diff_hl.left(i),
                 left_emph,
+                &find(left.as_deref()),
                 left_bg,
                 DEL_EMPH,
                 overlay,
@@ -159,6 +165,7 @@ fn render_row(
                 right.as_deref(),
                 app.diff_hl.right(i),
                 right_emph,
+                &find(right.as_deref()),
                 right_bg,
                 ADD_EMPH,
                 overlay,
@@ -177,10 +184,12 @@ fn lineno_span(no: Option<u32>, digits: usize) -> Span<'static> {
     Span::styled(text, Style::default().fg(NO_FG))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cell_spans(
     text: Option<&str>,
     syn: &[HlSpan],
     emph: &[Range<usize>],
+    find: &[Range<usize>],
     base_bg: Option<Color>,
     emph_bg: Color,
     overlay: Option<Color>,
@@ -207,7 +216,9 @@ fn cell_spans(
             .iter()
             .find(|&&(s, e, _)| b >= s && b < e)
             .map(|&(_, _, c)| rgb(c));
-        let bg = if emph.iter().any(|r| b >= r.start && b < r.end) {
+        let bg = if find.iter().any(|r| b >= r.start && b < r.end) {
+            Some(FIND_BG)
+        } else if emph.iter().any(|r| b >= r.start && b < r.end) {
             Some(emph_bg)
         } else {
             overlay.or(base_bg)

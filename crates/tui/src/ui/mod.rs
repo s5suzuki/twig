@@ -1,5 +1,7 @@
 mod diff;
 mod graph;
+mod help;
+mod search;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -27,6 +29,10 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         let parts = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
         draw_prompt_bar(frame, app, parts[1]);
         area = parts[0];
+    }
+    if app.help_open {
+        help::draw(frame, app, area);
+        return;
     }
     match app.view_mode {
         ViewMode::All => draw_all(frame, app, area),
@@ -278,8 +284,9 @@ fn draw_right(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let selected = match app.active_tab {
         Tab::Graph => 0,
         Tab::Diff => 1,
+        Tab::Search => 2,
     };
-    let tabs = Tabs::new(["Graph", "Diff"])
+    let tabs = Tabs::new(["Graph", "Diff", "Search"])
         .select(selected)
         .highlight_style(Style::default().fg(FOCUS_FG).add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, rows[0]);
@@ -287,5 +294,6 @@ fn draw_right(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     match app.active_tab {
         Tab::Graph => graph::draw(frame, app, rows[1]),
         Tab::Diff => diff::draw(frame, app, rows[1]),
+        Tab::Search => search::draw(frame, app, rows[1]),
     }
 }

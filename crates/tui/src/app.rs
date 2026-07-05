@@ -24,6 +24,7 @@ pub enum Pane {
 pub enum Tab {
     Graph,
     Diff,
+    Search,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -126,6 +127,35 @@ fn pick<T: Clone>(items: &[T], c: char) -> Option<T> {
     (1..=items.len()).contains(&idx).then(|| items[idx - 1].clone())
 }
 
+fn fold_ascii(s: &str) -> String {
+    s.chars().map(|c| c.to_ascii_lowercase()).collect()
+}
+
+pub fn find_ranges(query: &str, text: &str) -> Vec<std::ops::Range<usize>> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let folded_text = fold_ascii(text);
+    let folded_query = fold_ascii(query);
+    folded_text
+        .match_indices(&folded_query)
+        .map(|(i, m)| i..i + m.len())
+        .collect()
+}
+
+fn row_contains(row: &repo::DiffRow, query: &str) -> bool {
+    match row {
+        repo::DiffRow::Line { left, right, .. } => {
+            left.as_deref()
+                .is_some_and(|t| !find_ranges(query, t).is_empty())
+                || right
+                    .as_deref()
+                    .is_some_and(|t| !find_ranges(query, t).is_empty())
+        }
+        _ => false,
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Prompt {
     Commit,
@@ -147,6 +177,11 @@ pub enum Prompt {
     ConfirmSeqAbort,
     StashOp { index: usize },
     ConfirmStashDrop { index: usize },
+    DiffFind,
+    SearchQuery,
+    SearchReplace,
+    ConfirmSearchReplace { replacement: String },
+    ConfirmSubmodule { kind: RemoteKind, parent: PathBuf, name: String },
 }
 
 impl Prompt {
@@ -158,6 +193,9 @@ impl Prompt {
                 | Prompt::CreateBranch { .. }
                 | Prompt::RenameBranch { .. }
                 | Prompt::CreateTag { .. }
+                | Prompt::DiffFind
+                | Prompt::SearchQuery
+                | Prompt::SearchReplace
         )
     }
 
@@ -222,6 +260,18 @@ impl Prompt {
             Prompt::ConfirmStashDrop { index } => {
                 format!("Drop stash@{{{index}}}? (y/n)")
             }
+            Prompt::DiffFind => "Find in diff:".to_string(),
+            Prompt::SearchQuery => "Search repository:".to_string(),
+            Prompt::SearchReplace => "Replace matches with:".to_string(),
+            Prompt::ConfirmSearchReplace { replacement } => {
+                format!("Replace all matches with \"{replacement}\"? (y/n)")
+            }
+            Prompt::ConfirmSubmodule { kind, name, .. } => match kind {
+                RemoteKind::SubmoduleInit => {
+                    format!("Initialize submodule {name} (clone)? (y/n)")
+                }
+                _ => format!("Update submodule {name} to the recorded commit? (y/n)"),
+            },
         }
     }
 }
@@ -245,6 +295,8 @@ pub enum RemoteKind {
     Push,
     ForcePush,
     DeleteRemote,
+    SubmoduleInit,
+    SubmoduleUpdate,
 }
 
 impl RemoteKind {
@@ -255,6 +307,8 @@ impl RemoteKind {
             RemoteKind::Push => "push",
             RemoteKind::ForcePush => "force push",
             RemoteKind::DeleteRemote => "delete remote branch",
+            RemoteKind::SubmoduleInit => "submodule init",
+            RemoteKind::SubmoduleUpdate => "submodule update",
         }
     }
 
@@ -264,7 +318,45 @@ impl RemoteKind {
             RemoteKind::Pull => "Pulling",
             RemoteKind::Push | RemoteKind::ForcePush => "Pushing",
             RemoteKind::DeleteRemote => "Deleting remote branch",
+            RemoteKind::SubmoduleInit => "Initializing submodule",
+            RemoteKind::SubmoduleUpdate => "Updating submodule",
         }
+    }
+}
+
+#[derive(Default)]
+pub struct SearchState {
+    pub query: String,
+    pub hits: Vec<twig_core::search::FileHit>,
+    pub cursor: usize,
+    pub scroll: usize,
+    pub view_rows: usize,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum SearchRow {
+    File(usize),
+    Line(usize, usize),
+}
+
+impl SearchState {
+    pub fn rows(&self) -> Vec<SearchRow> {
+        let mut out = Vec::new();
+        for (i, f) in self.hits.iter().enumerate() {
+            out.push(SearchRow::File(i));
+            for j in 0..f.lines.len() {
+                out.push(SearchRow::Line(i, j));
+            }
+        }
+        out
+    }
+
+    pub fn match_count(&self) -> usize {
+        self.hits
+            .iter()
+            .flat_map(|f| f.lines.iter())
+            .map(|l| l.ranges.len())
+            .sum()
     }
 }
 
@@ -344,6 +436,12 @@ pub struct TuiApp {
     pub stashes: Vec<repo::StashEntry>,
     pub seq: Option<(repo::SeqState, Vec<String>)>,
     pub remote: Option<RemoteJob>,
+    pub diff_find: Option<String>,
+    pub search: SearchState,
+    pub help_open: bool,
+    pub help_scroll: usize,
+    diff_recheck: u8,
+    diff_recheck_at: Option<std::time::Instant>,
     pub pending_copy: Option<String>,
     pub pending_focus_jump: bool,
 }
@@ -351,6 +449,8 @@ pub struct TuiApp {
 pub struct SidebarRow {
     pub path: PathBuf,
     pub label: String,
+    pub name: String,
+    pub parent: Option<PathBuf>,
     pub initialized: bool,
 }
 
@@ -412,6 +512,12 @@ impl TuiApp {
             stashes: Vec::new(),
             seq: None,
             remote: None,
+            diff_find: None,
+            search: SearchState::default(),
+            help_open: false,
+            help_scroll: 0,
+            diff_recheck: 0,
+            diff_recheck_at: None,
             pending_copy: None,
             pending_focus_jump: false,
         };
@@ -455,12 +561,13 @@ impl TuiApp {
         self.clamp_changes_cursor();
         if let Some((path, staged)) = self.selected_file.clone() {
             self.reload_file_diff(&path, staged);
+            self.arm_diff_recheck();
         }
     }
 
     pub fn sidebar_rows(&self) -> Vec<SidebarRow> {
         let mut out = Vec::new();
-        push_sidebar_rows(&self.root, 0, &mut out);
+        push_sidebar_rows(&self.root, 0, None, &mut out);
         out
     }
 
@@ -536,6 +643,7 @@ impl TuiApp {
                 self.active_tab = Tab::Diff;
                 self.focus = Pane::RightTab;
                 self.error = None;
+                self.arm_diff_recheck();
             }
             Err(e) => self.error = Some(format!("diff failed: {e}")),
         }
@@ -628,9 +736,34 @@ impl TuiApp {
             }
             if self.prompt.is_some() {
                 self.handle_prompt_key(ev);
-            } else if let Some(nk) = keys::normalize(&ev) {
+                continue;
+            }
+            if self.help_open {
+                self.handle_help_key(ev);
+                continue;
+            }
+            if ev.kind != KeyEventKind::Release && ev.code == KeyCode::Char('?') {
+                self.help_open = true;
+                self.help_scroll = 0;
+                continue;
+            }
+            if let Some(nk) = keys::normalize(&ev) {
                 self.handle_key(nk);
             }
+        }
+    }
+
+    fn handle_help_key(&mut self, ev: KeyEvent) {
+        if ev.kind == KeyEventKind::Release {
+            return;
+        }
+        match ev.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => self.help_open = false,
+            KeyCode::Char('j') | KeyCode::Down => self.help_scroll += 1,
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.help_scroll = self.help_scroll.saturating_sub(1)
+            }
+            _ => {}
         }
     }
 
@@ -681,6 +814,7 @@ impl TuiApp {
                         | Action::CycleTab
                         | Action::CycleTabFwd
                         | Action::CycleTabBack
+                        | Action::OpenSearch
                 )
             });
         for a in global {
@@ -689,6 +823,7 @@ impl TuiApp {
                 Action::FocusRight => self.focus_move(1),
                 Action::CycleTab | Action::CycleTabFwd => self.cycle_tab(1),
                 Action::CycleTabBack => self.cycle_tab(-1),
+                Action::OpenSearch => self.open_search_tab(),
                 _ => {}
             }
         }
@@ -699,8 +834,15 @@ impl TuiApp {
             Pane::RightTab => match self.active_tab {
                 Tab::Graph => self.graph_keys(queue),
                 Tab::Diff => self.diff_keys(queue),
+                Tab::Search => self.search_keys(queue),
             },
         }
+    }
+
+    fn open_search_tab(&mut self) {
+        self.active_tab = Tab::Search;
+        self.focus = Pane::RightTab;
+        self.prompt = Some((Prompt::SearchQuery, self.search.query.clone()));
     }
 
     fn handle_key_single(&mut self, view: View, queue: &mut KeyQueue) {
@@ -712,13 +854,17 @@ impl TuiApp {
                 .resolve(queue, Context::Global, &mut self.pending_prefix, |a| {
                     matches!(
                         a,
-                        Action::CycleTab | Action::CycleTabFwd | Action::CycleTabBack
+                        Action::CycleTab
+                            | Action::CycleTabFwd
+                            | Action::CycleTabBack
+                            | Action::OpenSearch
                     )
                 });
             for a in global {
                 match a {
                     Action::CycleTab | Action::CycleTabFwd => self.cycle_tab(1),
                     Action::CycleTabBack => self.cycle_tab(-1),
+                    Action::OpenSearch => self.open_search_tab(),
                     _ => {}
                 }
             }
@@ -732,6 +878,7 @@ impl TuiApp {
             View::Main => match self.active_tab {
                 Tab::Graph => self.graph_keys(queue),
                 Tab::Diff => self.diff_keys(queue),
+                Tab::Search => self.search_keys(queue),
             },
         }
 
@@ -958,6 +1105,35 @@ impl TuiApp {
             Prompt::ConfirmStashDrop { index } => {
                 self.run_stash_op(repo::stash_drop(&self.selected, index), "stash drop");
             }
+            Prompt::DiffFind => {
+                let query = input.trim().to_string();
+                if query.is_empty() {
+                    self.diff_find = None;
+                } else {
+                    let on_match = self
+                        .diff
+                        .rows
+                        .get(self.diff_nav.cursor)
+                        .is_some_and(|r| row_contains(r, &query));
+                    self.diff_find = Some(query);
+                    if !on_match {
+                        self.jump_find(true);
+                    }
+                }
+            }
+            Prompt::SearchQuery => self.run_search(input.trim()),
+            Prompt::SearchReplace => {
+                self.prompt = Some((
+                    Prompt::ConfirmSearchReplace { replacement: input },
+                    String::new(),
+                ));
+            }
+            Prompt::ConfirmSearchReplace { replacement } => {
+                self.run_search_replace(&replacement);
+            }
+            Prompt::ConfirmSubmodule { kind, parent, name } => {
+                self.start_remote_submodule(kind, parent, name);
+            }
             Prompt::Reset { .. }
             | Prompt::Checkout { .. }
             | Prompt::DeleteRef { .. }
@@ -1136,6 +1312,68 @@ impl TuiApp {
         self.start_remote(RemoteKind::Push, remote, vec![refspec]);
     }
 
+    fn submodule_prompt(&mut self, row: &SidebarRow, update: bool) {
+        let Some(parent) = row.parent.clone() else {
+            self.error = Some("not a submodule".to_string());
+            return;
+        };
+        if update && !row.initialized {
+            self.error = Some("initialize the submodule first".to_string());
+            return;
+        }
+        if !update && row.initialized {
+            self.error = Some("submodule is already initialized".to_string());
+            return;
+        }
+        let kind = if update {
+            RemoteKind::SubmoduleUpdate
+        } else {
+            RemoteKind::SubmoduleInit
+        };
+        self.prompt = Some((
+            Prompt::ConfirmSubmodule {
+                kind,
+                parent,
+                name: row.name.clone(),
+            },
+            String::new(),
+        ));
+    }
+
+    fn start_remote_submodule(&mut self, kind: RemoteKind, parent: PathBuf, name: String) {
+        if self.remote.is_some() {
+            self.error = Some("a remote operation is already running".to_string());
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let ptx = tx.clone();
+            let progress = move |received, total| {
+                let _ = ptx.send(RemoteMsg::Progress(received, total));
+            };
+            let result = match kind {
+                RemoteKind::SubmoduleUpdate => repo::submodule_update(&parent, &name, progress),
+                _ => repo::submodule_init(&parent, &name, progress),
+            }
+            .map(|()| repo::SeqOutcome::Done);
+            let _ = tx.send(RemoteMsg::Done(result.map_err(|e| e.to_string())));
+        });
+        self.error = None;
+        self.remote = Some(RemoteJob {
+            kind,
+            progress: None,
+            rx,
+        });
+    }
+
+    fn rediscover(&mut self) {
+        let root_path = self.root.path.clone();
+        match repo::discover(&root_path) {
+            Ok(node) => self.root = node,
+            Err(e) => self.error = Some(format!("rediscover failed: {e}")),
+        }
+    }
+
     fn start_remote(&mut self, kind: RemoteKind, remote: Option<String>, refspecs: Vec<String>) {
         if self.remote.is_some() {
             self.error = Some("a remote operation is already running".to_string());
@@ -1173,6 +1411,9 @@ impl TuiApp {
                     repo::delete_remote_branch(&path, &remote, &branch, progress)
                         .map(|()| repo::SeqOutcome::Done)
                 }
+                RemoteKind::SubmoduleInit | RemoteKind::SubmoduleUpdate => Err(
+                    twig_core::git2::Error::from_str("not a plain remote operation"),
+                ),
             };
             let _ = tx.send(RemoteMsg::Done(result.map_err(|e| e.to_string())));
         });
@@ -1210,7 +1451,15 @@ impl TuiApp {
         if let Some(res) = done {
             let kind = self.remote.take().map(|j| j.kind).unwrap_or(RemoteKind::Fetch);
             match res {
-                Ok(_) => self.error = None,
+                Ok(_) => {
+                    self.error = None;
+                    if matches!(
+                        kind,
+                        RemoteKind::SubmoduleInit | RemoteKind::SubmoduleUpdate
+                    ) {
+                        self.rediscover();
+                    }
+                }
                 Err(e) => self.error = Some(format!("{} failed: {e}", kind.verb())),
             }
             self.refresh();
@@ -1300,6 +1549,13 @@ impl TuiApp {
         }
         let last = rows.len() - 1;
         let half = (self.sidebar_view_rows / 2).max(1);
+        let took_init = queue.take(Modifiers::NONE, Key::I);
+        let took_update = !took_init && queue.take(Modifiers::NONE, Key::U);
+        if took_init || took_update {
+            let row = &rows[self.sidebar_cursor.min(last)];
+            self.submodule_prompt(row, took_update);
+            return;
+        }
         let actions = self
             .keymap
             .resolve(queue, Context::Sidebar, &mut self.pending_prefix, |_| true);
@@ -1439,11 +1695,19 @@ impl TuiApp {
     }
 
     fn diff_keys(&mut self, queue: &mut KeyQueue) {
+        if self.diff_find.is_some() {
+            if queue.take(Modifiers::NONE, Key::N) {
+                self.jump_find(true);
+                return;
+            }
+            if queue.take(Modifiers::SHIFT, Key::N) {
+                self.jump_find(false);
+                return;
+            }
+        }
         let actions = self
             .keymap
-            .resolve(queue, Context::Diff, &mut self.pending_prefix, |a| {
-                !matches!(a, Action::DiffFind)
-            });
+            .resolve(queue, Context::Diff, &mut self.pending_prefix, |_| true);
         let rows_len = self.diff.rows.len();
         for a in actions {
             match a {
@@ -1464,7 +1728,14 @@ impl TuiApp {
                     }
                 }
                 Action::DiffToggleVisual => self.diff_nav.toggle_visual(),
-                Action::DiffClearVisual => self.diff_nav.anchor = None,
+                Action::DiffClearVisual => {
+                    self.diff_nav.anchor = None;
+                    self.diff_find = None;
+                }
+                Action::DiffFind => {
+                    let current = self.diff_find.clone().unwrap_or_default();
+                    self.prompt = Some((Prompt::DiffFind, current));
+                }
                 Action::DiffHalfPageDown => {
                     self.diff_nav
                         .scroll(&self.diff.rows, self.diff_view_rows, 0.5, true)
@@ -1755,6 +2026,170 @@ impl TuiApp {
         });
     }
 
+    fn search_keys(&mut self, queue: &mut KeyQueue) {
+        if queue.take(Modifiers::NONE, Key::Slash) {
+            self.prompt = Some((Prompt::SearchQuery, self.search.query.clone()));
+            return;
+        }
+        if queue.take(Modifiers::NONE, Key::R) {
+            if self.search.hits.is_empty() {
+                self.error = Some("nothing to replace (run a search first)".to_string());
+            } else {
+                self.prompt = Some((Prompt::SearchReplace, String::new()));
+            }
+            return;
+        }
+        let rows = self.search.rows();
+        if rows.is_empty() {
+            return;
+        }
+        let last = rows.len() - 1;
+        let half = (self.search.view_rows / 2).max(1);
+        if queue.take(Modifiers::NONE, Key::J) || queue.take(Modifiers::NONE, Key::ArrowDown) {
+            self.search.cursor = (self.search.cursor + 1).min(last);
+        }
+        if queue.take(Modifiers::NONE, Key::K) || queue.take(Modifiers::NONE, Key::ArrowUp) {
+            self.search.cursor = self.search.cursor.saturating_sub(1);
+        }
+        if queue.take(Modifiers::CTRL, Key::D) {
+            self.search.cursor = (self.search.cursor + half).min(last);
+        }
+        if queue.take(Modifiers::CTRL, Key::U) {
+            self.search.cursor = self.search.cursor.saturating_sub(half);
+        }
+        if queue.take(Modifiers::SHIFT, Key::G) {
+            self.search.cursor = last;
+        }
+        if queue.take(Modifiers::NONE, Key::Enter) || queue.take(Modifiers::NONE, Key::E) {
+            let path = match rows.get(self.search.cursor.min(last)) {
+                Some(SearchRow::File(i)) | Some(SearchRow::Line(i, _)) => {
+                    self.search.hits.get(*i).map(|f| f.path.clone())
+                }
+                None => None,
+            };
+            if let Some(path) = path {
+                self.pending_editor = Some(self.selected.join(path));
+            }
+        }
+    }
+
+    fn run_search(&mut self, query: &str) {
+        self.search.query = query.to_string();
+        self.search.cursor = 0;
+        self.search.scroll = 0;
+        if query.is_empty() {
+            self.search.hits.clear();
+            return;
+        }
+        match twig_core::search::Matcher::new(query, false, false) {
+            Ok(m) => {
+                self.search.hits = twig_core::search::search_repo(&self.selected, &m);
+                self.error = None;
+            }
+            Err(e) => self.error = Some(format!("search failed: {e}")),
+        }
+    }
+
+    fn run_search_replace(&mut self, replacement: &str) {
+        let matcher = match twig_core::search::Matcher::new(&self.search.query, false, false) {
+            Ok(m) => m,
+            Err(e) => {
+                self.error = Some(format!("replace failed: {e}"));
+                return;
+            }
+        };
+        let mut files = 0usize;
+        let mut count = 0usize;
+        for hit in &self.search.hits {
+            let abs = self.selected.join(&hit.path);
+            let Ok(text) = std::fs::read_to_string(&abs) else {
+                continue;
+            };
+            let (new_text, n) =
+                twig_core::search::replace_all_in_text(&matcher, &text, replacement);
+            if n > 0 && std::fs::write(&abs, new_text).is_ok() {
+                files += 1;
+                count += n;
+            }
+        }
+        self.error = Some(format!("replaced {count} matches in {files} files"));
+        let query = self.search.query.clone();
+        self.run_search(&query);
+        self.refresh();
+    }
+
+    fn jump_find(&mut self, forward: bool) {
+        let Some(query) = self.diff_find.clone() else {
+            return;
+        };
+        let rows = &self.diff.rows;
+        if rows.is_empty() {
+            return;
+        }
+        let n = rows.len();
+        let start = self.diff_nav.cursor.min(n - 1);
+        for step in 1..=n {
+            let i = if forward {
+                (start + step) % n
+            } else {
+                (start + n - step % n) % n
+            };
+            if row_contains(&rows[i], &query) {
+                self.diff_nav.set_cursor(rows, i);
+                self.diff_center = true;
+                return;
+            }
+        }
+        self.error = Some(format!("no match: {query}"));
+    }
+
+    fn arm_diff_recheck(&mut self) {
+        let transient = self.diff.rows.is_empty()
+            && !self.diff.binary
+            && self.diff.note.as_deref() == Some("(no changes)")
+            && self
+                .selected_file
+                .as_ref()
+                .is_some_and(|(p, _)| self.worktree_file_changed(p));
+        if transient {
+            self.diff_recheck = 5;
+            self.diff_recheck_at =
+                Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
+        } else {
+            self.diff_recheck = 0;
+            self.diff_recheck_at = None;
+        }
+    }
+
+    fn worktree_file_changed(&self, file: &str) -> bool {
+        self.unstaged.iter().any(|e| e.path == file) || self.staged.iter().any(|e| e.path == file)
+    }
+
+    pub fn poll_diff_recheck(&mut self) -> bool {
+        if self.diff_recheck == 0 {
+            return false;
+        }
+        let Some(at) = self.diff_recheck_at else {
+            return false;
+        };
+        if std::time::Instant::now() < at {
+            return false;
+        }
+        self.diff_recheck -= 1;
+        self.diff_recheck_at =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(100));
+        let Some((path, staged)) = self.selected_file.clone() else {
+            self.diff_recheck = 0;
+            return false;
+        };
+        self.reload_file_diff(&path, staged);
+        if !self.diff.rows.is_empty() || self.diff_recheck == 0 {
+            self.diff_recheck = 0;
+            self.diff_recheck_at = None;
+        }
+        true
+    }
+
     fn graph_open_editor(&mut self) {
         let items = self.graph_items();
         if let Some(GraphItem::File(k)) =
@@ -1866,7 +2301,7 @@ impl TuiApp {
             self.focus = Pane::RightTab;
             return;
         }
-        let order = [Tab::Graph, Tab::Diff];
+        let order = [Tab::Graph, Tab::Diff, Tab::Search];
         let cur = order.iter().position(|t| *t == self.active_tab).unwrap_or(0) as isize;
         let next = (cur + dir).rem_euclid(order.len() as isize) as usize;
         self.active_tab = order[next];
@@ -1881,7 +2316,12 @@ fn diff_mode(staged: bool) -> repo::DiffMode {
     }
 }
 
-fn push_sidebar_rows(node: &RepoNode, depth: usize, out: &mut Vec<SidebarRow>) {
+fn push_sidebar_rows(
+    node: &RepoNode,
+    depth: usize,
+    parent: Option<&Path>,
+    out: &mut Vec<SidebarRow>,
+) {
     let mut label = format!("{}{}", "  ".repeat(depth), node.name);
     if !node.initialized {
         label.push_str(" (uninit)");
@@ -1895,9 +2335,11 @@ fn push_sidebar_rows(node: &RepoNode, depth: usize, out: &mut Vec<SidebarRow>) {
     out.push(SidebarRow {
         path: node.path.clone(),
         label,
+        name: node.name.clone(),
+        parent: parent.map(Path::to_path_buf),
         initialized: node.initialized,
     });
     for child in &node.children {
-        push_sidebar_rows(child, depth + 1, out);
+        push_sidebar_rows(child, depth + 1, Some(&node.path), out);
     }
 }

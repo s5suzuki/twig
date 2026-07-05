@@ -205,6 +205,10 @@ fn run(
             dirty = true;
         }
 
+        if app.poll_diff_recheck() {
+            dirty = true;
+        }
+
         if !keys.is_empty() {
             app.handle_input(keys);
             dirty = true;
