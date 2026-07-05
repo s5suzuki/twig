@@ -1,0 +1,17 @@
+[package]
+name = "twig-tui"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "twig-tui"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.30.2"
+twig-core = { path = "../core", default-features = false }
+unicode-width = "0.2.2"
+
+[features]
+default = ["syntax-highlight"]
+syntax-highlight = ["twig-core/syntax-highlight"]
