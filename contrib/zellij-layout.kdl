@@ -1,21 +1,17 @@
-// twig-tui multipane layout for Zellij.
-// Usage: zellij action new-tab --layout /path/to/zellij-layout.kdl
-// Run from inside the repository: each pane opens the current directory and
-// joins the same session automatically (session token derived from repo path).
 layout {
     pane size=1 borderless=true {
         plugin location="zellij:tab-bar"
     }
     pane split_direction="vertical" {
-        pane size=26 command="twig-tui" name="repositories" {
+        pane size=26 command="twit" name="repositories" {
             args "--view" "sidebar"
             close_on_exit true
         }
-        pane size=36 command="twig-tui" name="changes" {
+        pane size=36 command="twit" name="changes" {
             args "--view" "changes"
             close_on_exit true
         }
-        pane command="twig-tui" name="graph | diff" {
+        pane command="twit" name="graph | diff" {
             args "--view" "main"
             close_on_exit true
         }
@@ -24,3 +20,4 @@ layout {
         plugin location="zellij:status-bar"
     }
 }
+

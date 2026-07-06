@@ -64,14 +64,14 @@ fn main() {
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("twig-tui: {e}");
+            eprintln!("twit: {e}");
             std::process::exit(2);
         }
     };
     let path = match PathBuf::from(&args.repo).canonicalize() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("twig-tui: cannot open {}: {e}", args.repo);
+            eprintln!("twit: cannot open {}: {e}", args.repo);
             std::process::exit(1);
         }
     };
@@ -87,7 +87,7 @@ fn main() {
         if args.new_tab {
             match zellij::spawn_tab(&path) {
                 Ok(()) => return,
-                Err(e) => eprintln!("twig-tui: zellij split failed ({e}); running single window"),
+                Err(e) => eprintln!("twit: zellij split failed ({e}); running single window"),
             }
         } else {
             let token = session::pid_token();
@@ -98,7 +98,7 @@ fn main() {
                     cols = Some(26);
                 }
                 Err(e) => {
-                    eprintln!("twig-tui: zellij split failed ({e}); running single window")
+                    eprintln!("twit: zellij split failed ({e}); running single window")
                 }
             }
         }
@@ -108,7 +108,7 @@ fn main() {
     let mut app = match TuiApp::with_view(&path, view_mode) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("twig-tui: {e}");
+            eprintln!("twit: {e}");
             std::process::exit(1);
         }
     };
@@ -143,7 +143,7 @@ fn main() {
         }
     }
     if let Err(e) = result {
-        eprintln!("twig-tui: {e}");
+        eprintln!("twit: {e}");
         std::process::exit(1);
     }
 }
@@ -160,7 +160,7 @@ fn run_shell(repo: &std::path::Path, session_token: Option<String>, shrink: Opti
     let mut child = match std::process::Command::new(&shell).current_dir(repo).spawn() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("twig-tui: failed to start {shell}: {e}");
+            eprintln!("twit: failed to start {shell}: {e}");
             std::process::exit(1);
         }
     };
