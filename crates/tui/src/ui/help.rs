@@ -3,10 +3,22 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use twig_core::keymap::Context;
+use twig_core::keymap::{Action, Context};
 
 use crate::app::{Pane, Tab, TuiApp};
 use crate::ui::FOCUS_FG;
+
+fn tui_supported(action: Action) -> bool {
+    !matches!(
+        action,
+        Action::FocusUp
+            | Action::FocusDown
+            | Action::ToggleShell
+            | Action::NavBack
+            | Action::NavForward
+            | Action::GraphContextMenu
+    )
+}
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
@@ -42,6 +54,9 @@ fn section(lines: &mut Vec<Line<'static>>, app: &TuiApp, ctx: Context) {
         Style::default().add_modifier(Modifier::BOLD),
     ));
     for e in app.keymap.help_for(ctx) {
+        if !tui_supported(e.action) {
+            continue;
+        }
         lines.push(Line::raw(format!("  {:<18} {}", e.keys, e.desc)));
     }
     lines.push(Line::raw(""));

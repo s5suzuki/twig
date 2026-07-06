@@ -720,6 +720,7 @@ impl Binding {
 }
 
 pub struct HelpEntry {
+    pub action: Action,
     pub keys: String,
     pub desc: &'static str,
 }
@@ -917,6 +918,7 @@ impl Keymap {
         bindings
             .iter()
             .map(|b| HelpEntry {
+                action: b.action,
                 keys: b.describe(),
                 desc: b.action.describe(),
             })
@@ -1031,7 +1033,6 @@ mod tests {
                 .iter()
                 .any(|b| b.chord.key == Key::E && b.action == Action::DiffHalfPageDown)
         );
-        // ctrl+d default survives because the override for it was invalid
         assert!(diff_map.iter().any(|b| b.chord.key == Key::D
             && b.chord.mods.ctrl
             && b.action == Action::DiffHalfPageDown));
