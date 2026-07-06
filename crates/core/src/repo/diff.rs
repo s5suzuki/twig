@@ -377,16 +377,42 @@ fn delta_kind(d: git2::Delta) -> StatusKind {
     }
 }
 
-pub fn commit_files(repo_path: &Path, oid: Oid) -> Result<Vec<CommitFile>, git2::Error> {
-    let repo = Repository::open(repo_path)?;
-    let commit = repo.find_commit(oid)?;
+fn stash_untracked_tree<'r>(commit: &git2::Commit<'r>) -> Option<git2::Tree<'r>> {
+    if commit.parent_count() < 3 {
+        return None;
+    }
+    let parent = commit.parent(2).ok()?;
+    let summary = parent.summary().ok().flatten().unwrap_or("");
+    if summary.starts_with("untracked files on ") {
+        parent.tree().ok()
+    } else {
+        None
+    }
+}
+
+fn commit_full_diff<'r>(
+    repo: &'r Repository,
+    commit: &git2::Commit<'r>,
+    mut opts: DiffOptions,
+) -> Result<Diff<'r>, git2::Error> {
     let tree = commit.tree()?;
     let parent_tree = if commit.parent_count() > 0 {
         Some(commit.parent(0)?.tree()?)
     } else {
         None
     };
-    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
+    let mut diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
+    if let Some(untracked) = stash_untracked_tree(commit) {
+        let extra = repo.diff_tree_to_tree(None, Some(&untracked), Some(&mut opts))?;
+        diff.merge(&extra)?;
+    }
+    Ok(diff)
+}
+
+pub fn commit_files(repo_path: &Path, oid: Oid) -> Result<Vec<CommitFile>, git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    let commit = repo.find_commit(oid)?;
+    let diff = commit_full_diff(&repo, &commit, DiffOptions::new())?;
 
     let mut out = Vec::new();
     for delta in diff.deltas() {
@@ -413,17 +439,11 @@ pub fn commit_message(repo_path: &Path, oid: Oid) -> Result<String, git2::Error>
 pub fn commit_file_diff(repo_path: &Path, oid: Oid, file: &str) -> Result<FileDiff, git2::Error> {
     let repo = Repository::open(repo_path)?;
     let commit = repo.find_commit(oid)?;
-    let tree = commit.tree()?;
-    let parent_tree = if commit.parent_count() > 0 {
-        Some(commit.parent(0)?.tree()?)
-    } else {
-        None
-    };
 
     let mut opts = DiffOptions::new();
     opts.pathspec(file);
     opts.context_lines(3);
-    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
+    let diff = commit_full_diff(&repo, &commit, opts)?;
 
     let mut rows = Vec::new();
     let mut block = 0usize;
@@ -451,16 +471,10 @@ pub fn commit_file_diff(repo_path: &Path, oid: Oid, file: &str) -> Result<FileDi
 pub fn commit_diff(repo_path: &Path, oid: Oid) -> Result<FileDiff, git2::Error> {
     let repo = Repository::open(repo_path)?;
     let commit = repo.find_commit(oid)?;
-    let tree = commit.tree()?;
-    let parent_tree = if commit.parent_count() > 0 {
-        Some(commit.parent(0)?.tree()?)
-    } else {
-        None
-    };
 
     let mut opts = DiffOptions::new();
     opts.context_lines(3);
-    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
+    let diff = commit_full_diff(&repo, &commit, opts)?;
 
     let mut rows = Vec::new();
     let mut block = 0usize;
