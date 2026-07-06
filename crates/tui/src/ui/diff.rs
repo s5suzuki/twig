@@ -5,9 +5,9 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use twig_core::Rgb;
-use twig_core::highlight::Span as HlSpan;
-use twig_core::repo::{DiffRow, LineKind};
+use twit_core::Rgb;
+use twit_core::highlight::Span as HlSpan;
+use twit_core::repo::{DiffRow, LineKind};
 use unicode_width::UnicodeWidthChar;
 
 use crate::app::TuiApp;

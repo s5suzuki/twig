@@ -4,11 +4,11 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use ratatui::crossterm::event::{self, Event, KeyEvent};
-use twig_core::watch::WorktreeWatcher;
+use twit_core::watch::WorktreeWatcher;
 
-use twig_tui::app::{Tab, TuiApp, View, ViewMode};
-use twig_tui::session::{self, Session};
-use twig_tui::{clipboard, ui, zellij};
+use twit::app::{Tab, TuiApp, View, ViewMode};
+use twit::session::{self, Session};
+use twit::{clipboard, ui, zellij};
 
 struct Args {
     repo: String,
@@ -407,7 +407,7 @@ fn open_editor(
     }
 
     if let Some(server) = nvim_server() {
-        if let Err(e) = twig_core::editor::open_abs_in_server(file, std::path::Path::new(&server))
+        if let Err(e) = twit_core::editor::open_abs_in_server(file, std::path::Path::new(&server))
         {
             app.error = Some(e);
         }

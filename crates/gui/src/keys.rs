@@ -1,6 +1,6 @@
-pub use twig_core::keymap::{Action, Chord, Context, Key, Keymap, Modifiers};
+pub use twit_core::keymap::{Action, Chord, Context, Key, Keymap, Modifiers};
 
-use twig_core::keymap::KeySource;
+use twit_core::keymap::KeySource;
 
 struct UiSource<'a>(&'a mut egui::Ui);
 

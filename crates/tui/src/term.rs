@@ -5,9 +5,9 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use twig_term::alacritty_terminal::term::cell::Flags;
-use twig_term::alacritty_terminal::vte::ansi::CursorShape;
-use twig_term::{TermBackend, color_rgb};
+use twit_term::alacritty_terminal::term::cell::Flags;
+use twit_term::alacritty_terminal::vte::ansi::CursorShape;
+use twit_term::{TermBackend, color_rgb};
 
 pub struct EditorTerm {
     pub be: TermBackend,

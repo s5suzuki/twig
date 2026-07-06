@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use twig_core::repo::{GraphRow, RefKind, Segment};
+use twit_core::repo::{GraphRow, RefKind, Segment};
 
 use crate::app::{GraphItem, Pane, TuiApp};
 

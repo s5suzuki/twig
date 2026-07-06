@@ -7,7 +7,7 @@ mod ui;
 
 use std::path::PathBuf;
 
-use twig_core::{config, editor, highlight, repo, search};
+use twit_core::{config, editor, highlight, repo, search};
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();

@@ -7,11 +7,11 @@ use std::thread;
 
 use git2::Oid;
 
-use twig_core::config::Config;
-use twig_core::diffnav::{self, DiffNavState};
 use crate::keys::{Chord, Keymap};
-use twig_core::repo::{self, DiffMode, DiffRow, FileDiff, Graph, RepoNode, StatusEntry};
-use twig_core::search;
+use twit_core::config::Config;
+use twit_core::diffnav::{self, DiffNavState};
+use twit_core::repo::{self, DiffMode, DiffRow, FileDiff, Graph, RepoNode, StatusEntry};
+use twit_core::search;
 
 pub const LIST_PAGE: usize = 10;
 const NAV_HISTORY_MAX: usize = 100;
@@ -297,7 +297,7 @@ pub struct App {
     pub selected_commit_file: Option<String>,
     pub commit_folds: HashSet<String>,
     pub diff: FileDiff,
-    pub diff_hl: twig_core::highlight::DiffHighlighter,
+    pub diff_hl: twit_core::highlight::DiffHighlighter,
     pub diff_galleys: crate::ui::diff_view::DiffGalleyCache,
     diff_ver: u64,
     diff_sig: u64,
@@ -363,7 +363,7 @@ pub struct App {
     remote_task: Option<Receiver<RemoteMsg>>,
 
     watch_root: PathBuf,
-    watcher: Option<twig_core::watch::WorktreeWatcher>,
+    watcher: Option<twit_core::watch::WorktreeWatcher>,
     watcher_started: bool,
 
     repaint_gate: Arc<AtomicBool>,
@@ -376,8 +376,6 @@ pub struct App {
 
 impl App {
     pub fn new(path: PathBuf) -> Self {
-        // Absolute root: a relative `.`/`..` makes the watcher's gitignore matcher
-        // panic on absolute event paths, silently killing change detection.
         let path = std::fs::canonicalize(&path).unwrap_or(path);
         let config = Config::load();
         let keymap = Keymap::from_config(&config.keys);
@@ -398,7 +396,7 @@ impl App {
             selected_commit_file: None,
             commit_folds: HashSet::new(),
             diff: empty_diff(),
-            diff_hl: twig_core::highlight::DiffHighlighter::default(),
+            diff_hl: twit_core::highlight::DiffHighlighter::default(),
             diff_galleys: crate::ui::diff_view::DiffGalleyCache::default(),
             diff_ver: 0,
             diff_sig: 0,
@@ -474,7 +472,7 @@ impl App {
     }
 
     pub fn apply_config(&self, ctx: &egui::Context) {
-        ctx.set_zoom_factor(self.config.font_size / twig_core::config::BASE_FONT_SIZE);
+        ctx.set_zoom_factor(self.config.font_size / twit_core::config::BASE_FONT_SIZE);
         ctx.set_visuals(crate::theme::visuals(&self.config));
     }
 
@@ -506,12 +504,12 @@ impl App {
         self.watcher_started = true;
         let ctx = ctx.clone();
         let gate = self.repaint_gate();
-        let notifier: twig_core::watch::Notifier = Arc::new(move || {
+        let notifier: twit_core::watch::Notifier = Arc::new(move || {
             if gate.load(Ordering::Relaxed) {
                 ctx.request_repaint();
             }
         });
-        match twig_core::watch::WorktreeWatcher::new(&self.watch_root, notifier) {
+        match twit_core::watch::WorktreeWatcher::new(&self.watch_root, notifier) {
             Ok(w) => self.watcher = Some(w),
             Err(e) => self.error = Some(e),
         }
@@ -658,9 +656,9 @@ impl App {
         self.diff_hl_sig = Some(sig);
         self.diff_hl = match self.diff_path() {
             Some(path) if !self.diff.rows.is_empty() => {
-                twig_core::highlight::DiffHighlighter::new(&path, &self.diff.rows, dark)
+                twit_core::highlight::DiffHighlighter::new(&path, &self.diff.rows, dark)
             }
-            _ => twig_core::highlight::DiffHighlighter::default(),
+            _ => twit_core::highlight::DiffHighlighter::default(),
         };
     }
 
@@ -1418,7 +1416,7 @@ impl App {
         self.active_tab = Tab::Editor;
         self.focus = Pane::RightTab;
         if self.term.is_some() && self.nvim_socket.exists() {
-            if let Err(e) = twig_core::editor::open_abs_in_server(&abs, &self.nvim_socket) {
+            if let Err(e) = twit_core::editor::open_abs_in_server(&abs, &self.nvim_socket) {
                 self.error = Some(e);
             }
         } else {
@@ -1433,7 +1431,7 @@ impl App {
         if self.term.is_none() || !self.nvim_socket.exists() {
             return true;
         }
-        if let Err(e) = twig_core::editor::open_abs_in_server(&abs, &self.nvim_socket) {
+        if let Err(e) = twit_core::editor::open_abs_in_server(&abs, &self.nvim_socket) {
             self.error = Some(e);
         }
         self.pending_open = None;
@@ -2162,8 +2160,7 @@ impl App {
     }
 
     fn worktree_file_changed(&self, file: &str) -> bool {
-        self.unstaged.iter().any(|e| e.path == file)
-            || self.staged.iter().any(|e| e.path == file)
+        self.unstaged.iter().any(|e| e.path == file) || self.staged.iter().any(|e| e.path == file)
     }
 
     fn arm_diff_recheck(&mut self, file: &str) {
@@ -2337,7 +2334,6 @@ mod tests {
         assert!(!app.diff.rows.is_empty(), "settled file must diff");
         assert_eq!(app.diff_recheck, 0, "settled diff must not arm recheck");
 
-        // Simulate the editor mid-write window: the file is momentarily empty.
         std::fs::write(tmp.join("new.txt"), "").unwrap();
         app.load_file_diff("new.txt".to_string(), false);
         assert!(app.diff.rows.is_empty());
@@ -2347,7 +2343,6 @@ mod tests {
             "transient empty diff must arm recheck"
         );
 
-        // The write settles; the recheck loop must recover the real diff.
         std::fs::write(tmp.join("new.txt"), content).unwrap();
         let ctx = egui::Context::default();
         let mut t = 1.0;

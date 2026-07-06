@@ -6,8 +6,8 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use twig_tui::app::{Pane, Tab, TuiApp};
-use twig_tui::ui;
+use twit::app::{Pane, Tab, TuiApp};
+use twit::ui;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -27,7 +27,7 @@ fn git(dir: &Path, args: &[&str]) {
 
 fn temp_repo() -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("twig-tui-test-{}-{n}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("twit-test-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);
@@ -389,14 +389,14 @@ fn two_hunk_repo() -> PathBuf {
 }
 
 fn count_staged_changes(dir: &Path) -> usize {
-    let d = twig_core::repo::file_diff(dir, "x.txt", twig_core::repo::DiffMode::Staged).unwrap();
+    let d = twit_core::repo::file_diff(dir, "x.txt", twit_core::repo::DiffMode::Staged).unwrap();
     d.rows
         .iter()
         .filter(|r| {
             matches!(
                 r,
-                twig_core::repo::DiffRow::Line { kind, .. }
-                    if *kind != twig_core::repo::LineKind::Context
+                twit_core::repo::DiffRow::Line { kind, .. }
+                    if *kind != twit_core::repo::LineKind::Context
             )
         })
         .count()
@@ -697,7 +697,7 @@ fn changes_folder_row_bulk_stages_and_folds() {
     assert!(
         matches!(
             items[app.changes_cursor],
-            twig_tui::app::ChangesItem::Folder { .. }
+            twit::app::ChangesItem::Folder { .. }
         ),
         "h on a child jumps to the parent folder"
     );
@@ -799,7 +799,7 @@ fn stash_drop_requires_confirmation() {
 fn push_and_force_push_to_local_remote() {
     let dir = temp_repo();
     let origin = std::env::temp_dir().join(format!(
-        "twig-tui-origin-{}-{}",
+        "twit-origin-{}-{}",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
@@ -871,7 +871,7 @@ fn conflicted_cherry_pick_shows_banner_and_aborts() {
     app.handle_input(vec![key(KeyCode::Char('y')), key(KeyCode::Char('y'))]);
 
     assert!(
-        matches!(app.seq, Some((twig_core::repo::SeqState::CherryPick, _))),
+        matches!(app.seq, Some((twit_core::repo::SeqState::CherryPick, _))),
         "conflict leaves the sequencer active"
     );
     let lines = screen(&mut app, 140, 30);
@@ -945,7 +945,7 @@ fn diff_find_jumps_and_highlights() {
     app.handle_input(vec![key(KeyCode::Enter)]);
     let row = &app.diff.rows[app.diff_nav.cursor];
     let hit = match row {
-        twig_core::repo::DiffRow::Line { right, .. } => {
+        twit_core::repo::DiffRow::Line { right, .. } => {
             right.as_deref().unwrap_or("").contains("line18v2")
         }
         _ => false,
@@ -1004,7 +1004,7 @@ fn sidebar_initializes_submodule_via_prompt() {
     git(&parent, &["commit", "-qm", "add submodule"]);
 
     let clone = std::env::temp_dir().join(format!(
-        "twig-tui-clone-{}-{}",
+        "twit-clone-{}-{}",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
@@ -1080,7 +1080,7 @@ fn graph_expands_commit_files_and_opens_per_file_diff() {
     app.handle_input(vec![key(KeyCode::Char('h'))]);
     let items = app.graph_items();
     assert!(
-        matches!(items[app.graph_cursor], twig_tui::app::GraphItem::Commit(_)),
+        matches!(items[app.graph_cursor], twit::app::GraphItem::Commit(_)),
         "h jumps back to the commit row"
     );
     app.handle_input(vec![key(KeyCode::Enter)]);

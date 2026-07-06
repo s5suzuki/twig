@@ -6,9 +6,9 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use twig_tui::app::{Pane, Tab, TuiApp, View, ViewMode};
-use twig_tui::session::Session;
-use twig_tui::ui;
+use twit::app::{Pane, Tab, TuiApp, View, ViewMode};
+use twit::session::Session;
+use twit::ui;
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 

@@ -4,12 +4,12 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use serde::{Deserialize, Serialize};
-use twig_core::config::Config;
-use twig_core::diffnav::DiffNavState;
-use twig_core::git2::Oid;
-use twig_core::highlight::DiffHighlighter;
-use twig_core::keymap::{Action, Chord, Context, Key, Keymap, Modifiers};
-use twig_core::repo::{self, CommitFile, FileDiff, Graph, RepoNode, StatusEntry};
+use twit_core::config::Config;
+use twit_core::diffnav::DiffNavState;
+use twit_core::git2::Oid;
+use twit_core::highlight::DiffHighlighter;
+use twit_core::keymap::{Action, Chord, Context, Key, Keymap, Modifiers};
+use twit_core::repo::{self, CommitFile, FileDiff, Graph, RepoNode, StatusEntry};
 
 use crate::keys::{self, KeyQueue};
 use crate::session::{Session, SharedState};
@@ -126,7 +126,9 @@ fn numbered(refs: &[RefTarget]) -> String {
 
 fn pick<T: Clone>(items: &[T], c: char) -> Option<T> {
     let idx = c.to_digit(10)? as usize;
-    (1..=items.len()).contains(&idx).then(|| items[idx - 1].clone())
+    (1..=items.len())
+        .contains(&idx)
+        .then(|| items[idx - 1].clone())
 }
 
 fn fold_ascii(s: &str) -> String {
@@ -163,28 +165,70 @@ pub enum Prompt {
     Commit,
     Amend,
     ConfirmAmendPushed,
-    ConfirmDiscardFiles { paths: Vec<String>, label: String },
-    ConfirmDiscardLines { path: String, lo: usize, hi: usize },
-    CreateBranch { at: Oid },
-    RenameBranch { from: String },
-    CreateTag { at: Oid },
-    Reset { oid: Oid },
-    ConfirmResetHard { oid: Oid },
-    ConfirmOp { op: GraphOp, oid: Oid },
-    Checkout { oid: Oid, refs: Vec<RefTarget> },
-    DeleteRef { refs: Vec<RefTarget> },
-    ConfirmDeleteRef { target: RefTarget },
-    PickRenameBranch { names: Vec<String> },
-    ConfirmForcePush { remote: String, refspec: String },
+    ConfirmDiscardFiles {
+        paths: Vec<String>,
+        label: String,
+    },
+    ConfirmDiscardLines {
+        path: String,
+        lo: usize,
+        hi: usize,
+    },
+    CreateBranch {
+        at: Oid,
+    },
+    RenameBranch {
+        from: String,
+    },
+    CreateTag {
+        at: Oid,
+    },
+    Reset {
+        oid: Oid,
+    },
+    ConfirmResetHard {
+        oid: Oid,
+    },
+    ConfirmOp {
+        op: GraphOp,
+        oid: Oid,
+    },
+    Checkout {
+        oid: Oid,
+        refs: Vec<RefTarget>,
+    },
+    DeleteRef {
+        refs: Vec<RefTarget>,
+    },
+    ConfirmDeleteRef {
+        target: RefTarget,
+    },
+    PickRenameBranch {
+        names: Vec<String>,
+    },
+    ConfirmForcePush {
+        remote: String,
+        refspec: String,
+    },
     ConfirmSeqAbort,
-    StashOp { index: usize },
-    ConfirmStashDrop { index: usize },
+    StashOp {
+        index: usize,
+    },
+    ConfirmStashDrop {
+        index: usize,
+    },
     DiffFind,
     EditGraphLimit,
     SearchQuery,
     SearchReplace,
-    ConfirmSearchReplace { replacement: String },
-    ConfirmSubmodule { kind: RemoteKind, parent: PathBuf, name: String },
+    ConfirmSearchReplace {
+        replacement: String,
+    },
+    ConfirmSubmodule {
+        kind: RemoteKind,
+        parent: PathBuf,
+        name: String,
+    },
 }
 
 impl Prompt {
@@ -249,9 +293,7 @@ impl Prompt {
         match self {
             Prompt::Commit => "Commit message:".to_string(),
             Prompt::Amend => "Amend message:".to_string(),
-            Prompt::ConfirmAmendPushed => {
-                "HEAD is already pushed. Amend anyway? (y/n)".to_string()
-            }
+            Prompt::ConfirmAmendPushed => "HEAD is already pushed. Amend anyway? (y/n)".to_string(),
             Prompt::ConfirmDiscardFiles { label, .. } => {
                 format!("Discard changes to {label}? (y/n)")
             }
@@ -388,7 +430,7 @@ impl RemoteKind {
 #[derive(Default)]
 pub struct SearchState {
     pub query: String,
-    pub hits: Vec<twig_core::search::FileHit>,
+    pub hits: Vec<twit_core::search::FileHit>,
     pub cursor: usize,
     pub scroll: usize,
     pub view_rows: usize,
@@ -560,7 +602,8 @@ impl TuiApp {
         let config = Config::load();
         let root = repo::discover(path).map_err(|e| e.to_string())?;
         let (staged, unstaged) = repo::load_status(path).map_err(|e| e.to_string())?;
-        let graph = repo::build_graph(path, config.graph_commit_limit).map_err(|e| e.to_string())?;
+        let graph =
+            repo::build_graph(path, config.graph_commit_limit).map_err(|e| e.to_string())?;
         let mut app = Self {
             root,
             selected: path.to_path_buf(),
@@ -867,8 +910,7 @@ impl TuiApp {
     }
 
     fn worktree_file_staged(&self, file: &str) -> bool {
-        !self.unstaged.iter().any(|e| e.path == file)
-            && self.staged.iter().any(|e| e.path == file)
+        !self.unstaged.iter().any(|e| e.path == file) && self.staged.iter().any(|e| e.path == file)
     }
 
     fn open_commit_file_diff(&mut self, oid: Oid, path: String) {
@@ -1136,17 +1178,17 @@ impl TuiApp {
         }
 
         if view == View::Main {
-            let global = self
-                .keymap
-                .resolve(queue, Context::Global, &mut self.pending_prefix, |a| {
-                    matches!(
-                        a,
-                        Action::CycleTab
-                            | Action::CycleTabFwd
-                            | Action::CycleTabBack
-                            | Action::OpenSearch
-                    )
-                });
+            let global =
+                self.keymap
+                    .resolve(queue, Context::Global, &mut self.pending_prefix, |a| {
+                        matches!(
+                            a,
+                            Action::CycleTab
+                                | Action::CycleTabFwd
+                                | Action::CycleTabBack
+                                | Action::OpenSearch
+                        )
+                    });
             for a in global {
                 match a {
                     Action::CycleTab | Action::CycleTabFwd => self.cycle_tab(1),
@@ -1280,7 +1322,8 @@ impl TuiApp {
                 path: path.clone(),
                 staged: *staged,
             }
-        } else if let (Some(oid), Some(path)) = (&self.selected_commit, &self.selected_commit_file) {
+        } else if let (Some(oid), Some(path)) = (&self.selected_commit, &self.selected_commit_file)
+        {
             NavSel::CommitFile {
                 oid: *oid,
                 path: path.clone(),
@@ -1474,15 +1517,16 @@ impl TuiApp {
             Prompt::ConfirmAmendPushed => self.run_amend(&input),
             Prompt::ConfirmDiscardFiles { paths, .. } => self.run_discard_files(&paths),
             Prompt::ConfirmDiscardLines { path, lo, hi } => self.run_discard_lines(&path, lo, hi),
-            Prompt::CreateBranch { at } => self.run_ref_op(|s, name| {
-                repo::create_branch(&s.selected, name, at)
-            }, &input),
-            Prompt::RenameBranch { from } => self.run_ref_op(|s, name| {
-                repo::rename_branch(&s.selected, &from, name)
-            }, &input),
-            Prompt::CreateTag { at } => self.run_ref_op(|s, name| {
-                repo::create_tag(&s.selected, name, at)
-            }, &input),
+            Prompt::CreateBranch { at } => {
+                self.run_ref_op(|s, name| repo::create_branch(&s.selected, name, at), &input)
+            }
+            Prompt::RenameBranch { from } => self.run_ref_op(
+                |s, name| repo::rename_branch(&s.selected, &from, name),
+                &input,
+            ),
+            Prompt::CreateTag { at } => {
+                self.run_ref_op(|s, name| repo::create_tag(&s.selected, name, at), &input)
+            }
             Prompt::ConfirmResetHard { oid } => self.run_reset(oid, repo::ResetMode::Hard),
             Prompt::ConfirmOp { op, oid } => self.run_graph_op(op, oid),
             Prompt::ConfirmDeleteRef { target } => self.run_delete_ref(&target),
@@ -1540,7 +1584,7 @@ impl TuiApp {
 
     fn run_ref_op(
         &mut self,
-        f: impl FnOnce(&Self, &str) -> Result<(), twig_core::git2::Error>,
+        f: impl FnOnce(&Self, &str) -> Result<(), twit_core::git2::Error>,
         input: &str,
     ) {
         let name = input.trim();
@@ -1589,7 +1633,7 @@ impl TuiApp {
     fn apply_seq_outcome(
         &mut self,
         what: &str,
-        r: Result<repo::SeqOutcome, twig_core::git2::Error>,
+        r: Result<repo::SeqOutcome, twit_core::git2::Error>,
     ) {
         match r {
             Ok(_) => self.error = None,
@@ -1784,7 +1828,13 @@ impl TuiApp {
         let refspecs = if kind == RemoteKind::ForcePush {
             refspecs
                 .into_iter()
-                .map(|r| if r.starts_with('+') { r } else { format!("+{r}") })
+                .map(|r| {
+                    if r.starts_with('+') {
+                        r
+                    } else {
+                        format!("+{r}")
+                    }
+                })
                 .collect()
         } else {
             refspecs
@@ -1808,7 +1858,7 @@ impl TuiApp {
                         .map(|()| repo::SeqOutcome::Done)
                 }
                 RemoteKind::SubmoduleInit | RemoteKind::SubmoduleUpdate => Err(
-                    twig_core::git2::Error::from_str("not a plain remote operation"),
+                    twit_core::git2::Error::from_str("not a plain remote operation"),
                 ),
             };
             let _ = tx.send(RemoteMsg::Done(result.map_err(|e| e.to_string())));
@@ -1845,7 +1895,11 @@ impl TuiApp {
             }
         }
         if let Some(res) = done {
-            let kind = self.remote.take().map(|j| j.kind).unwrap_or(RemoteKind::Fetch);
+            let kind = self
+                .remote
+                .take()
+                .map(|j| j.kind)
+                .unwrap_or(RemoteKind::Fetch);
             match res {
                 Ok(_) => {
                     self.error = None;
@@ -1952,9 +2006,9 @@ impl TuiApp {
             self.submodule_prompt(row, took_update);
             return;
         }
-        let actions = self
-            .keymap
-            .resolve(queue, Context::Sidebar, &mut self.pending_prefix, |_| true);
+        let actions =
+            self.keymap
+                .resolve(queue, Context::Sidebar, &mut self.pending_prefix, |_| true);
         for a in actions {
             match a {
                 Action::SidebarDown => self.sidebar_cursor = (self.sidebar_cursor + 1).min(last),
@@ -1982,9 +2036,9 @@ impl TuiApp {
 
     fn changes_keys(&mut self, queue: &mut KeyQueue) {
         let half = (self.changes_view_rows / 2).max(1);
-        let actions = self
-            .keymap
-            .resolve(queue, Context::Changes, &mut self.pending_prefix, |_| true);
+        let actions =
+            self.keymap
+                .resolve(queue, Context::Changes, &mut self.pending_prefix, |_| true);
         for a in actions {
             let items = self.changes_items();
             let last = items.len().saturating_sub(1);
@@ -1995,14 +2049,12 @@ impl TuiApp {
                 Action::ChangesUp => self.changes_cursor = cursor.saturating_sub(1),
                 Action::ChangesTop => self.changes_cursor = 0,
                 Action::ChangesBottom => self.changes_cursor = last,
-                Action::ChangesHalfPageDown => {
-                    self.changes_cursor = (cursor + half).min(last)
-                }
-                Action::ChangesHalfPageUp => {
-                    self.changes_cursor = cursor.saturating_sub(half)
-                }
+                Action::ChangesHalfPageDown => self.changes_cursor = (cursor + half).min(last),
+                Action::ChangesHalfPageUp => self.changes_cursor = cursor.saturating_sub(half),
                 Action::ChangesActivate => match item {
-                    Some(ChangesItem::Folder { path, staged, open, .. }) => {
+                    Some(ChangesItem::Folder {
+                        path, staged, open, ..
+                    }) => {
                         self.set_fold(staged, path, open);
                     }
                     item => self.changes_open(item),
@@ -2081,7 +2133,12 @@ impl TuiApp {
                 self.pending_focus_jump = self.error.is_none();
             }
             Some(ChangesItem::Stash(index)) => {
-                if let Some(oid) = self.stashes.iter().find(|s| s.index == index).map(|s| s.oid) {
+                if let Some(oid) = self
+                    .stashes
+                    .iter()
+                    .find(|s| s.index == index)
+                    .map(|s| s.oid)
+                {
                     self.open_commit_diff(oid);
                     self.pending_focus_jump = self.error.is_none();
                 }
@@ -2161,10 +2218,7 @@ impl TuiApp {
             self.run_discard_files(&paths);
             return;
         }
-        self.prompt = Some((
-            Prompt::ConfirmDiscardFiles { paths, label },
-            String::new(),
-        ));
+        self.prompt = Some((Prompt::ConfirmDiscardFiles { paths, label }, String::new()));
     }
 
     fn stash_push(&mut self) {
@@ -2179,7 +2233,7 @@ impl TuiApp {
         self.refresh();
     }
 
-    fn run_stash_op(&mut self, r: Result<(), twig_core::git2::Error>, what: &str) {
+    fn run_stash_op(&mut self, r: Result<(), twit_core::git2::Error>, what: &str) {
         match r {
             Ok(()) => self.error = None,
             Err(e) => self.error = Some(format!("{what} failed: {e}")),
@@ -2348,8 +2402,9 @@ impl TuiApp {
             return None;
         }
         let cursor = self.diff_nav.cursor.min(rows.len() - 1);
-        let is_boundary =
-            |r: &repo::DiffRow| matches!(r, repo::DiffRow::Hunk { .. } | repo::DiffRow::FileHeader(_));
+        let is_boundary = |r: &repo::DiffRow| {
+            matches!(r, repo::DiffRow::Hunk { .. } | repo::DiffRow::FileHeader(_))
+        };
         if rows.iter().any(|r| matches!(r, repo::DiffRow::Hunk { .. })) {
             let lo = (0..=cursor).rev().find(|&i| is_boundary(&rows[i]))? + 1;
             let hi = (cursor + 1..rows.len())
@@ -2452,7 +2507,7 @@ impl TuiApp {
     }
 
     fn row_refs(&self, row: usize) -> Vec<RefTarget> {
-        use twig_core::repo::RefKind;
+        use twit_core::repo::RefKind;
         self.graph.rows[row]
             .refs
             .iter()
@@ -2502,7 +2557,7 @@ impl TuiApp {
                 }
             }
             Action::GraphRenameBranch => {
-                use twig_core::repo::RefKind;
+                use twit_core::repo::RefKind;
                 let names: Vec<String> = self.graph.rows[row]
                     .refs
                     .iter()
@@ -2596,9 +2651,9 @@ impl TuiApp {
             self.search.hits.clear();
             return;
         }
-        match twig_core::search::Matcher::new(query, false, false) {
+        match twit_core::search::Matcher::new(query, false, false) {
             Ok(m) => {
-                self.search.hits = twig_core::search::search_repo(&self.selected, &m);
+                self.search.hits = twit_core::search::search_repo(&self.selected, &m);
                 self.error = None;
             }
             Err(e) => self.error = Some(format!("search failed: {e}")),
@@ -2606,7 +2661,7 @@ impl TuiApp {
     }
 
     fn run_search_replace(&mut self, replacement: &str) {
-        let matcher = match twig_core::search::Matcher::new(&self.search.query, false, false) {
+        let matcher = match twit_core::search::Matcher::new(&self.search.query, false, false) {
             Ok(m) => m,
             Err(e) => {
                 self.error = Some(format!("replace failed: {e}"));
@@ -2621,7 +2676,7 @@ impl TuiApp {
                 continue;
             };
             let (new_text, n) =
-                twig_core::search::replace_all_in_text(&matcher, &text, replacement);
+                twit_core::search::replace_all_in_text(&matcher, &text, replacement);
             if n > 0 && std::fs::write(&abs, new_text).is_ok() {
                 files += 1;
                 count += n;
@@ -2753,10 +2808,7 @@ impl TuiApp {
                 self.open_commit_diff(oid);
                 if self.error.is_none() {
                     self.set_graph_cursor_to_commit(oid);
-                    if matches!(
-                        self.view_mode,
-                        ViewMode::All | ViewMode::Single(View::Main)
-                    ) {
+                    if matches!(self.view_mode, ViewMode::All | ViewMode::Single(View::Main)) {
                         self.active_tab = Tab::Graph;
                     }
                 }
@@ -2794,9 +2846,11 @@ impl TuiApp {
     }
 
     fn set_graph_cursor_to_commit(&mut self, oid: Oid) {
-        if let Some(idx) = self.graph_items().iter().position(
-            |it| matches!(it, GraphItem::Commit(r) if self.graph.rows[*r].id == oid),
-        ) {
+        if let Some(idx) = self
+            .graph_items()
+            .iter()
+            .position(|it| matches!(it, GraphItem::Commit(r) if self.graph.rows[*r].id == oid))
+        {
             self.graph_cursor = idx;
         }
     }
@@ -2814,7 +2868,10 @@ impl TuiApp {
             return;
         }
         let order = [Tab::Graph, Tab::Diff, Tab::Search, Tab::Editor];
-        let cur = order.iter().position(|t| *t == self.active_tab).unwrap_or(0) as isize;
+        let cur = order
+            .iter()
+            .position(|t| *t == self.active_tab)
+            .unwrap_or(0) as isize;
         let next = (cur + dir).rem_euclid(order.len() as isize) as usize;
         self.active_tab = order[next];
         if self.active_tab == Tab::Editor {
@@ -2873,7 +2930,7 @@ impl TuiApp {
         self.active_tab = Tab::Editor;
         self.focus = Pane::RightTab;
         if self.nvim_socket.exists() {
-            match twig_core::editor::open_abs_in_server(file, &self.nvim_socket) {
+            match twit_core::editor::open_abs_in_server(file, &self.nvim_socket) {
                 Ok(()) => self.error = None,
                 Err(e) => self.error = Some(e),
             }
@@ -2896,7 +2953,7 @@ impl TuiApp {
         }
         if self.nvim_socket.exists() {
             self.pending_open = None;
-            match twig_core::editor::open_abs_in_server(&file, &self.nvim_socket) {
+            match twit_core::editor::open_abs_in_server(&file, &self.nvim_socket) {
                 Ok(()) => self.error = None,
                 Err(e) => self.error = Some(e),
             }

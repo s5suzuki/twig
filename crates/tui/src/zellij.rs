@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn layout_kdl_snapshot() {
-        let kdl = layout_kdl("/usr/bin/twig-tui", "/home/u/repo", "p123");
+        let kdl = layout_kdl("/usr/bin/twit", "/home/u/repo", "p123");
         assert_eq!(
             kdl,
             r#"layout {
@@ -156,20 +156,20 @@ mod tests {
         plugin location="zellij:tab-bar"
     }
     pane split_direction="vertical" {
-        pane size=26 command="/usr/bin/twig-tui" name="repositories" {
+        pane size=26 command="/usr/bin/twit" name="repositories" {
             args "--view" "sidebar" "--session" "p123" "/home/u/repo"
             close_on_exit true
         }
-        pane size=36 command="/usr/bin/twig-tui" name="changes" {
+        pane size=36 command="/usr/bin/twit" name="changes" {
             args "--view" "changes" "--session" "p123" "/home/u/repo"
             close_on_exit true
         }
         pane split_direction="horizontal" {
-            pane command="/usr/bin/twig-tui" name="graph | diff" {
+            pane command="/usr/bin/twit" name="graph | diff" {
                 args "--view" "main" "--session" "p123" "/home/u/repo"
                 close_on_exit true
             }
-            pane size="30%" command="/usr/bin/twig-tui" name="terminal" {
+            pane size="30%" command="/usr/bin/twit" name="terminal" {
                 args "--shell" "--session" "p123" "/home/u/repo"
                 close_on_exit true
             }
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn layout_kdl_escapes_quotes_and_backslashes() {
-        let kdl = layout_kdl("twig-tui", r#"/tmp/we"ird\path"#, "t");
+        let kdl = layout_kdl("twit", r#"/tmp/we"ird\path"#, "t");
         assert!(kdl.contains(r#""/tmp/we\"ird\\path""#));
     }
 }

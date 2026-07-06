@@ -6,12 +6,12 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use twig_tui::app::{Pane, Tab, TuiApp};
-use twig_tui::ui;
+use twit::app::{Pane, Tab, TuiApp};
+use twit::ui;
 
 fn isolate_xdg() -> PathBuf {
     static INIT: std::sync::Once = std::sync::Once::new();
-    let dir = std::env::temp_dir().join(format!("twig-tui-editor-xdg-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("twit-editor-xdg-{}", std::process::id()));
     INIT.call_once(|| {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -54,7 +54,7 @@ fn git(dir: &Path, args: &[&str]) {
 fn temp_repo() -> PathBuf {
     static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("twig-tui-editor-{}-{n}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("twit-editor-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);

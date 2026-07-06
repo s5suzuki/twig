@@ -1,10 +1,10 @@
 [package]
-name = "twig-core"
+name = "twit-core"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "twig_core"
+name = "twit_core"
 path = "src/lib.rs"
 
 [dependencies]

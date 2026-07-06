@@ -1,7 +1,7 @@
 use egui::{Color32, Stroke, Visuals};
 
-use twig_core::color::Rgb;
-use twig_core::config::{Config, Theme};
+use twit_core::color::Rgb;
+use twit_core::config::{Config, Theme};
 
 pub fn c32(rgb: Rgb) -> Color32 {
     Color32::from_rgb(rgb.r, rgb.g, rgb.b)

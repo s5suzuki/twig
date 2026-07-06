@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use twig_core::keymap::{Action, Context};
+use twit_core::keymap::{Action, Context};
 
 use crate::app::{Pane, Tab, TuiApp};
 use crate::ui::FOCUS_FG;

@@ -6,8 +6,8 @@ use egui::{
     StrokeKind, TextFormat, pos2, text::LayoutJob, vec2,
 };
 
-use twig_core::highlight::{DiffHighlighter, Span};
-use twig_core::repo::{DiffRow, FileDiff, LineKind};
+use twit_core::highlight::{DiffHighlighter, Span};
+use twit_core::repo::{DiffRow, FileDiff, LineKind};
 
 #[derive(Default)]
 pub struct DiffGalleyCache {

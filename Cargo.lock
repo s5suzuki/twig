@@ -4503,7 +4503,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
-name = "twig-core"
+name = "twig"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "git2",
+ "regex",
+ "twit-core",
+ "twit-term",
+]
+
+[[package]]
+name = "twit"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "serde",
+ "serde_json",
+ "twit-core",
+ "twit-term",
+ "unicode-width",
+]
+
+[[package]]
+name = "twit-core"
 version = "0.1.0"
 dependencies = [
  "git2",
@@ -4517,35 +4541,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "twig-git-client"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "git2",
- "regex",
- "twig-core",
- "twig-term",
-]
-
-[[package]]
-name = "twig-term"
+name = "twit-term"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "portable-pty",
-]
-
-[[package]]
-name = "twig-tui"
-version = "0.1.0"
-dependencies = [
- "ratatui",
- "serde",
- "serde_json",
- "twig-core",
- "twig-term",
- "unicode-width",
 ]
 
 [[package]]

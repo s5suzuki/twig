@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::app::{App, Pane};
-use twig_core::repo::{FileNode, RepoNode};
+use twit_core::repo::{FileNode, RepoNode};
 
 enum RowKind {
     Repo { initialized: bool },
@@ -104,7 +104,7 @@ fn ensure_file_cache(app: &mut App) {
     for (repo, subs) in want {
         app.file_cache
             .entry(repo)
-            .or_insert_with_key(|repo| twig_core::repo::list_files(repo, &subs));
+            .or_insert_with_key(|repo| twit_core::repo::list_files(repo, &subs));
     }
 }
 

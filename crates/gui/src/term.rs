@@ -5,12 +5,12 @@ use std::sync::{Arc, OnceLock};
 use regex::Regex;
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, pos2, vec2};
-use twig_term::TermBackend;
-use twig_term::alacritty_terminal::grid::Scroll;
-use twig_term::alacritty_terminal::index::{Column, Line, Point, Side};
-use twig_term::alacritty_terminal::selection::{Selection, SelectionType};
-use twig_term::alacritty_terminal::term::TermMode;
-use twig_term::alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape};
+use twit_term::TermBackend;
+use twit_term::alacritty_terminal::grid::Scroll;
+use twit_term::alacritty_terminal::index::{Column, Line, Point, Side};
+use twit_term::alacritty_terminal::selection::{Selection, SelectionType};
+use twit_term::alacritty_terminal::term::TermMode;
+use twit_term::alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape};
 
 const FONT_SIZE: f32 = 13.0;
 
@@ -34,7 +34,7 @@ pub struct Term {
     preedit: String,
 }
 
-fn notifier(ctx: &egui::Context, repaint_gate: Arc<AtomicBool>) -> twig_term::Notifier {
+fn notifier(ctx: &egui::Context, repaint_gate: Arc<AtomicBool>) -> twit_term::Notifier {
     let ctx = ctx.clone();
     Arc::new(move || {
         if repaint_gate.load(Ordering::Relaxed) {
@@ -664,7 +664,7 @@ fn ctrl_byte(key: egui::Key) -> Option<u8> {
 }
 
 fn to_color(c: AnsiColor, default: Color32) -> Color32 {
-    twig_term::color_rgb(c)
+    twit_term::color_rgb(c)
         .map(|(r, g, b)| Color32::from_rgb(r, g, b))
         .unwrap_or(default)
 }

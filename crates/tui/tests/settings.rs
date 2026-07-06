@@ -5,8 +5,8 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use twig_tui::app::TuiApp;
-use twig_tui::ui;
+use twit::app::TuiApp;
+use twit::ui;
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -23,7 +23,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn temp_repo() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("twig-tui-settings-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("twit-settings-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);
@@ -58,7 +58,7 @@ fn find_line<'a>(lines: &'a [String], needle: &str) -> Option<&'a String> {
 
 #[test]
 fn settings_overlay_edits_save_and_apply_immediately() {
-    let conf = std::env::temp_dir().join(format!("twig-tui-conf-{}", std::process::id()));
+    let conf = std::env::temp_dir().join(format!("twit-conf-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&conf);
     std::fs::create_dir_all(&conf).unwrap();
     unsafe { std::env::set_var("XDG_CONFIG_HOME", &conf) };
@@ -101,7 +101,7 @@ fn settings_overlay_edits_save_and_apply_immediately() {
     let text = std::fs::read_to_string(conf.join("twig/config.toml")).unwrap();
     assert!(text.contains("graph_commit_limit = 1"), "saved: {text}");
     assert!(text.contains("confirm_discard = false"), "saved: {text}");
-    let reloaded = twig_core::config::Config::load();
+    let reloaded = twit_core::config::Config::load();
     assert_eq!(reloaded.graph_commit_limit, 1);
     assert!(!reloaded.confirm_discard);
 

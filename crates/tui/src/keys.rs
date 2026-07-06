@@ -1,5 +1,5 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use twig_core::keymap::{Key, KeySource, Modifiers};
+use twit_core::keymap::{Key, KeySource, Modifiers};
 
 pub fn normalize(ev: &KeyEvent) -> Option<(Modifiers, Key)> {
     if ev.kind == KeyEventKind::Release {
