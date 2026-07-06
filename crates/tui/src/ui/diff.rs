@@ -22,6 +22,12 @@ const NO_FG: Color = Color::Rgb(110, 110, 110);
 const SEL_BG: Color = Color::Rgb(0x2c, 0x33, 0x4d);
 const FIND_BG: Color = Color::Rgb(0x6b, 0x5a, 0x10);
 
+const MAP_TRACK: Color = Color::Rgb(0x22, 0x24, 0x2b);
+const MAP_ADD: Color = Color::Rgb(0x3e, 0x8a, 0x52);
+const MAP_DEL: Color = Color::Rgb(0x9a, 0x38, 0x45);
+const MAP_MOD: Color = Color::Rgb(0x8a, 0x74, 0x2e);
+const MAP_MIN_WIDTH: u16 = 28;
+
 pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     if let Some(note) = &app.diff.note {
         frame.render_widget(
@@ -44,6 +50,12 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
         return;
     }
 
+    let map_w: u16 = if area.width >= MAP_MIN_WIDTH { 1 } else { 0 };
+    let text_area = Rect {
+        width: area.width - map_w,
+        ..area
+    };
+
     let h = area.height as usize;
     app.diff_view_rows = h;
     ensure_cursor_visible(app, h);
@@ -62,7 +74,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
         .unwrap_or(1);
     let digits = max_no.to_string().len().max(2);
 
-    let total_w = area.width as usize;
+    let total_w = text_area.width as usize;
     let text_w = total_w
         .saturating_sub(1 + 2 * (digits + 1) + 1)
         .max(20)
@@ -76,6 +88,61 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     for i in app.diff_scroll..end {
         lines.push(render_row(app, i, digits, text_w, sel));
+    }
+    frame.render_widget(Paragraph::new(lines), text_area);
+
+    if map_w > 0 {
+        let map_area = Rect {
+            x: area.x + area.width - map_w,
+            width: map_w,
+            ..area
+        };
+        draw_change_map(frame, app, map_area, end);
+    }
+}
+
+fn draw_change_map(frame: &mut Frame, app: &TuiApp, area: Rect, end: usize) {
+    let rows = &app.diff.rows;
+    let n = rows.len();
+    let h = area.height as usize;
+    if n == 0 || h == 0 {
+        return;
+    }
+
+    let vp_lo = app.diff_scroll * h / n;
+    let vp_hi = (end * h / n).max(vp_lo + 1);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(h);
+    for y in 0..h {
+        let lo = y * n / h;
+        let hi = ((y + 1) * n / h).clamp(lo + 1, n);
+        let (mut added, mut removed) = (false, false);
+        for row in &rows[lo..hi] {
+            if let DiffRow::Line { kind, .. } = row {
+                match kind {
+                    LineKind::Added => added = true,
+                    LineKind::Removed => removed = true,
+                    LineKind::Changed => {
+                        added = true;
+                        removed = true;
+                    }
+                    LineKind::Context => {}
+                }
+            }
+        }
+        let bg = match (added, removed) {
+            (true, true) => MAP_MOD,
+            (true, false) => MAP_ADD,
+            (false, true) => MAP_DEL,
+            (false, false) => MAP_TRACK,
+        };
+        let in_vp = y >= vp_lo && y < vp_hi;
+        let span = if in_vp {
+            Span::styled("▐", Style::default().fg(FOCUS_FG).bg(bg))
+        } else {
+            Span::styled(" ", Style::default().bg(bg))
+        };
+        lines.push(Line::from(span));
     }
     frame.render_widget(Paragraph::new(lines), area);
 }
