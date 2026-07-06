@@ -23,6 +23,7 @@ pub enum LineKind {
 
 #[derive(Hash)]
 pub enum DiffRow {
+    Meta(String),
     FileHeader(String),
     Hunk {
         index: usize,
@@ -477,6 +478,14 @@ pub fn commit_diff(repo_path: &Path, oid: Oid) -> Result<FileDiff, git2::Error> 
     let diff = commit_full_diff(&repo, &commit, opts)?;
 
     let mut rows = Vec::new();
+    let message = commit.message().unwrap_or("").trim_end().to_string();
+    if !message.is_empty() {
+        for line in message.lines() {
+            rows.push(DiffRow::Meta(line.to_string()));
+        }
+        rows.push(DiffRow::Meta(String::new()));
+    }
+    let msg_rows = rows.len();
     let mut block = 0usize;
     for idx in 0..diff.deltas().len() {
         let delta = diff
@@ -497,7 +506,8 @@ pub fn commit_diff(repo_path: &Path, oid: Oid) -> Result<FileDiff, git2::Error> 
         append_patch_rows(&patch, &mut rows, &mut block)?;
     }
 
-    let note = if rows.is_empty() {
+    let note = if rows.len() == msg_rows {
+        rows.clear();
         Some("(no changes in this commit)".to_string())
     } else {
         None

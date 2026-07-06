@@ -58,13 +58,21 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
                 ));
                 *r
             }
+            GraphItem::Msg(m) => {
+                let r = parent_commit_row(&items, i, &app.graph.rows);
+                lines.push(msg_row(app, *m, r));
+                r.unwrap_or(0)
+            }
             GraphItem::File(k) => {
                 let r = parent_commit_row(&items, i, &app.graph.rows);
                 lines.push(file_row(app, *k, r, focused));
                 r.unwrap_or(0)
             }
         };
-        let next_is_file = matches!(items.get(i + 1), Some(GraphItem::File(_)));
+        let next_is_file = matches!(
+            items.get(i + 1),
+            Some(GraphItem::File(_) | GraphItem::Msg(_))
+        );
         if !next_is_file && commit_row + 1 < app.graph.rows.len() {
             lines.push(connector_row(&app.graph.rows[commit_row], app.graph.max_col));
         }
@@ -78,6 +86,18 @@ fn parent_commit_row(items: &[GraphItem], from: usize, rows: &[GraphRow]) -> Opt
         GraphItem::Commit(r) if r < rows.len() => Some(r),
         _ => None,
     })
+}
+
+fn msg_row(app: &TuiApp, m: usize, commit_row: Option<usize>) -> Line<'static> {
+    let mut spans = match commit_row {
+        Some(r) => lane_spans(&app.graph.rows[r], app.graph.max_col),
+        None => vec![Span::raw(" ".repeat(app.graph.max_col * 2 + 1))],
+    };
+    spans.push(Span::raw("   "));
+    if let Some(text) = app.commit_detail.get(m) {
+        spans.push(Span::styled(text.clone(), Style::default().fg(Color::Gray)));
+    }
+    Line::from(spans)
 }
 
 fn file_row(app: &TuiApp, k: usize, commit_row: Option<usize>, focused: bool) -> Line<'static> {

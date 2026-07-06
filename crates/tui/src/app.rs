@@ -357,7 +357,22 @@ impl Prompt {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum GraphItem {
     Commit(usize),
+    Msg(usize),
     File(usize),
+}
+
+fn skip_msg(items: &[GraphItem], i: usize, forward: bool) -> usize {
+    let is_msg = |j: usize| matches!(items.get(j), Some(GraphItem::Msg(_)));
+    if !is_msg(i) {
+        return i;
+    }
+    let ahead = (i + 1..items.len()).find(|&j| !is_msg(j));
+    let behind = (0..i).rev().find(|&j| !is_msg(j));
+    if forward {
+        ahead.or(behind).unwrap_or(i)
+    } else {
+        behind.or(ahead).unwrap_or(i)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -546,6 +561,7 @@ pub struct TuiApp {
     pub selected_commit: Option<Oid>,
     pub selected_commit_file: Option<String>,
     pub commit_files: Vec<CommitFile>,
+    pub commit_detail: Vec<String>,
     pub diff: FileDiff,
     pub diff_nav: DiffNavState,
     pub diff_scroll: usize,
@@ -635,6 +651,7 @@ impl TuiApp {
             selected_commit: None,
             selected_commit_file: None,
             commit_files: Vec::new(),
+            commit_detail: Vec::new(),
             diff: FileDiff::empty(),
             diff_nav: DiffNavState::default(),
             diff_scroll: 0,
@@ -706,6 +723,7 @@ impl TuiApp {
             self.selected_commit = None;
             self.selected_commit_file = None;
             self.commit_files.clear();
+            self.commit_detail.clear();
             self.graph_cursor = self.graph_cursor.min(self.graph_last());
         }
         self.clamp_changes_cursor();
@@ -777,6 +795,11 @@ impl TuiApp {
         for (i, row) in self.graph.rows.iter().enumerate() {
             out.push(GraphItem::Commit(i));
             if self.selected_commit == Some(row.id) {
+                if !self.commit_detail.is_empty() {
+                    for m in 0..=self.commit_detail.len() {
+                        out.push(GraphItem::Msg(m));
+                    }
+                }
                 for k in 0..self.commit_files.len() {
                     out.push(GraphItem::File(k));
                 }
@@ -798,6 +821,7 @@ impl TuiApp {
         self.selected_commit = None;
         self.selected_commit_file = None;
         self.commit_files.clear();
+        self.commit_detail.clear();
         self.diff = FileDiff::empty();
         self.diff_hl = DiffHighlighter::default();
         self.diff_sig = 0;
@@ -818,6 +842,7 @@ impl TuiApp {
                 self.selected_commit = None;
                 self.selected_commit_file = None;
                 self.commit_files.clear();
+                self.commit_detail.clear();
                 self.rebuild_highlight(&path);
                 self.diff_nav.reset();
                 self.diff_nav.first_hunk(&self.diff.rows);
@@ -862,6 +887,7 @@ impl TuiApp {
                 self.selected_commit = Some(oid);
                 self.selected_commit_file = None;
                 self.commit_files = repo::commit_files(&self.selected, oid).unwrap_or_default();
+                self.load_commit_detail(oid);
                 self.selected_file = None;
                 self.rebuild_highlight("");
                 self.diff_nav.reset();
@@ -878,6 +904,7 @@ impl TuiApp {
 
     fn open_uncommitted(&mut self, oid: Oid) {
         self.commit_files = self.uncommitted_files();
+        self.commit_detail.clear();
         self.diff = FileDiff {
             note: Some("Select a file".to_string()),
             ..FileDiff::empty()
@@ -925,6 +952,7 @@ impl TuiApp {
                 self.diff = d;
                 self.selected_commit = Some(oid);
                 self.selected_commit_file = Some(path.clone());
+                self.load_commit_detail(oid);
                 if self.commit_files.is_empty() {
                     self.commit_files = if oid.is_zero() {
                         self.uncommitted_files()
@@ -946,10 +974,28 @@ impl TuiApp {
         }
     }
 
+    fn load_commit_detail(&mut self, oid: Oid) {
+        self.commit_detail = if oid.is_zero() {
+            Vec::new()
+        } else {
+            repo::commit_message(&self.selected, oid)
+                .map(|m| {
+                    let mut lines: Vec<String> =
+                        m.trim_end().lines().skip(1).map(str::to_string).collect();
+                    while lines.first().is_some_and(|l| l.trim().is_empty()) {
+                        lines.remove(0);
+                    }
+                    lines
+                })
+                .unwrap_or_default()
+        };
+    }
+
     fn collapse_commit(&mut self) {
         self.selected_commit = None;
         self.selected_commit_file = None;
         self.commit_files.clear();
+        self.commit_detail.clear();
         self.diff = FileDiff::empty();
         self.diff_hl = DiffHighlighter::default();
         self.diff_sig = 0;
@@ -1271,6 +1317,7 @@ impl TuiApp {
                 self.selected_commit = None;
                 self.selected_commit_file = None;
                 self.commit_files.clear();
+                self.commit_detail.clear();
                 self.diff = FileDiff::empty();
                 self.diff_nav.reset();
                 self.diff_scroll = 0;
@@ -1366,6 +1413,7 @@ impl TuiApp {
                 self.selected_commit = None;
                 self.selected_commit_file = None;
                 self.commit_files.clear();
+                self.commit_detail.clear();
                 self.diff = FileDiff::empty();
                 self.diff_hl = DiffHighlighter::default();
                 self.diff_sig = 0;
@@ -2450,17 +2498,24 @@ impl TuiApp {
                 )
             });
         for a in actions {
-            let last = self.graph_last();
+            let items = self.graph_items();
+            let last = items.len().saturating_sub(1);
             match a {
-                Action::GraphDown => self.graph_cursor = (self.graph_cursor + 1).min(last),
-                Action::GraphUp => self.graph_cursor = self.graph_cursor.saturating_sub(1),
+                Action::GraphDown => {
+                    self.graph_cursor = skip_msg(&items, (self.graph_cursor + 1).min(last), true)
+                }
+                Action::GraphUp => {
+                    self.graph_cursor =
+                        skip_msg(&items, self.graph_cursor.saturating_sub(1), false)
+                }
                 Action::GraphTop => self.graph_cursor = 0,
-                Action::GraphBottom => self.graph_cursor = last,
+                Action::GraphBottom => self.graph_cursor = skip_msg(&items, last, false),
                 Action::GraphHalfPageDown => {
-                    self.graph_cursor = (self.graph_cursor + half).min(last)
+                    self.graph_cursor = skip_msg(&items, (self.graph_cursor + half).min(last), true)
                 }
                 Action::GraphHalfPageUp => {
-                    self.graph_cursor = self.graph_cursor.saturating_sub(half)
+                    self.graph_cursor =
+                        skip_msg(&items, self.graph_cursor.saturating_sub(half), false)
                 }
                 Action::GraphOpen => self.graph_open(),
                 Action::GraphCollapse => self.graph_collapse(),
@@ -2497,10 +2552,12 @@ impl TuiApp {
         let cursor = self.graph_cursor.min(items.len().checked_sub(1)?);
         let row = match items.get(cursor)? {
             GraphItem::Commit(r) => *r,
-            GraphItem::File(_) => (0..cursor).rev().find_map(|i| match items[i] {
-                GraphItem::Commit(r) => Some(r),
-                _ => None,
-            })?,
+            GraphItem::Msg(_) | GraphItem::File(_) => {
+                (0..cursor).rev().find_map(|i| match items[i] {
+                    GraphItem::Commit(r) => Some(r),
+                    _ => None,
+                })?
+            }
         };
         let gr = &self.graph.rows[row];
         (!gr.is_uncommitted).then_some((row, gr.id))
@@ -2820,7 +2877,7 @@ impl TuiApp {
                     self.pending_focus_jump = self.error.is_none();
                 }
             }
-            None => {}
+            Some(GraphItem::Msg(_)) | None => {}
         }
     }
 
@@ -2828,7 +2885,7 @@ impl TuiApp {
         let items = self.graph_items();
         let cursor = self.graph_cursor.min(items.len().saturating_sub(1));
         match items.get(cursor) {
-            Some(GraphItem::File(_)) => {
+            Some(GraphItem::File(_) | GraphItem::Msg(_)) => {
                 if let Some(ci) = (0..=cursor)
                     .rev()
                     .find(|&i| matches!(items[i], GraphItem::Commit(_)))

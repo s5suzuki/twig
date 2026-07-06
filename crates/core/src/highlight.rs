@@ -36,7 +36,9 @@ mod imp {
     use std::path::Path;
     use std::sync::OnceLock;
 
-    use syntect::highlighting::{HighlightIterator, HighlightState, Highlighter, Style, Theme, ThemeSet};
+    use syntect::highlighting::{
+        HighlightIterator, HighlightState, Highlighter, Style, Theme, ThemeSet,
+    };
     use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
 
     use super::Span;
@@ -115,7 +117,6 @@ mod imp {
             });
         }
 
-        // Highlight `text`, advancing the shared parser state (right side / current file).
         fn advance(&mut self, text: &str) -> Vec<Span> {
             let Some(st) = self.stream.as_mut() else {
                 return Vec::new();
@@ -130,8 +131,6 @@ mod imp {
             to_spans(&ranges, text.len())
         }
 
-        // Highlight `text` from a snapshot of the current state without advancing it
-        // (left side of removed / changed lines — old content).
         fn snapshot(&self, text: &str) -> Vec<Span> {
             let Some(st) = self.stream.as_ref() else {
                 return Vec::new();
@@ -195,7 +194,7 @@ mod imp {
                         let syn = syntax_for(engine.ss, header_path(header));
                         engine.set_syntax(syn);
                     }
-                    DiffRow::Hunk { .. } => {}
+                    DiffRow::Meta(_) | DiffRow::Hunk { .. } => {}
                     DiffRow::Line {
                         left, right, kind, ..
                     } => match kind {
@@ -288,10 +287,8 @@ mod imp {
                 .collect();
             let mut h = DiffHighlighter::new("a.rs", &rows, true);
             h.ensure_upto(&rows, 3);
-            // requested rows are highlighted...
             assert!(!h.right(0).is_empty(), "row 0 should be colored");
             assert!(!h.right(3).is_empty(), "row 3 should be colored");
-            // ...rows beyond the watermark are untouched until requested.
             assert!(h.right(10).is_empty(), "row 10 not requested yet");
             h.ensure_upto(&rows, 10);
             assert!(!h.right(10).is_empty(), "row 10 colored after request");

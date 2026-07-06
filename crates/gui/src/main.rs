@@ -918,6 +918,7 @@ fn print_diff(d: &repo::FileDiff) {
     }
     for (i, row) in d.rows.iter().enumerate() {
         match row {
+            repo::DiffRow::Meta(t) => println!("r{i:<3} ; {t}"),
             repo::DiffRow::FileHeader(p) => println!("r{i:<3} === {p} ==="),
             repo::DiffRow::Hunk { index, header } => println!("r{i:<3} [h{index}] {header}"),
             repo::DiffRow::Line {

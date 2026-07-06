@@ -183,6 +183,7 @@ fn render_row(
     };
 
     match &app.diff.rows[i] {
+        DiffRow::Meta(text) => Line::from(vec![gutter, Span::raw(text.clone())]),
         DiffRow::FileHeader(path) => Line::from(vec![
             gutter,
             Span::styled(

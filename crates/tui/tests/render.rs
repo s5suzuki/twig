@@ -1036,6 +1036,73 @@ fn sidebar_initializes_submodule_via_prompt() {
 }
 
 #[test]
+fn commit_diff_shows_full_multiline_message() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "first\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "commit",
+            "-qm",
+            "subject line",
+            "-m",
+            "body first paragraph",
+            "-m",
+            "body second paragraph",
+        ],
+    );
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert!(app.selected_commit.is_some());
+    assert_eq!(app.active_tab, Tab::Graph);
+
+    let lines = screen(&mut app, 140, 30);
+    let commit_idx = lines
+        .iter()
+        .position(|l| l.contains("subject line"))
+        .expect("commit row");
+    assert!(
+        lines[commit_idx + 1].contains("body first paragraph"),
+        "message body under expanded commit: {:?}",
+        &lines[commit_idx..commit_idx + 4]
+    );
+    let body2 = lines
+        .iter()
+        .position(|l| l.contains("body second paragraph"))
+        .expect("second body paragraph shown");
+    let file_row = lines
+        .iter()
+        .position(|l| l.contains("A a.txt"))
+        .expect("file row follows the message");
+    assert!(body2 < file_row);
+
+    app.handle_input(vec![key(KeyCode::Char('j'))]);
+    let items = app.graph_items();
+    assert!(
+        matches!(items[app.graph_cursor], twit::app::GraphItem::File(_)),
+        "cursor skips message lines: {:?}",
+        items[app.graph_cursor]
+    );
+
+    app.active_tab = Tab::Diff;
+    let lines = screen(&mut app, 140, 30);
+    let subject = lines
+        .iter()
+        .position(|l| l.contains("subject line"))
+        .expect("subject shown atop the commit diff");
+    assert!(find_line(&lines, "body first paragraph").is_some());
+    assert!(find_line(&lines, "body second paragraph").is_some());
+    let header = lines
+        .iter()
+        .position(|l| l.contains("a.txt"))
+        .expect("file header follows the message");
+    assert!(subject < header);
+}
+
+#[test]
 fn graph_expands_commit_files_and_opens_per_file_diff() {
     let dir = temp_repo();
     std::fs::write(dir.join("a.txt"), "first\n").unwrap();
@@ -1131,3 +1198,4 @@ fn graph_expands_uncommitted_node_and_opens_file_diff() {
     let row = find_line(&lines, "second").expect("per-file diff rendered");
     assert!(row.contains("first"), "old content on the left: {row}");
 }
+
