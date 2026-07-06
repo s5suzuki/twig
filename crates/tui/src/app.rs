@@ -203,6 +203,10 @@ impl Prompt {
         )
     }
 
+    pub fn wants_popup(&self) -> bool {
+        matches!(self, Prompt::Commit | Prompt::Amend)
+    }
+
     fn is_choice(&self) -> bool {
         matches!(
             self,

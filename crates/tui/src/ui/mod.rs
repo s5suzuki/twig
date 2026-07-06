@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Tabs};
+use ratatui::widgets::{Block, Clear, Paragraph, Tabs, Wrap};
 
 use crate::app::{ChangesItem, Pane, Tab, TuiApp, View, ViewMode};
 
@@ -26,7 +26,8 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         draw_remote_bar(frame, app, parts[1]);
         area = parts[0];
     }
-    if app.prompt.is_some() {
+    let popup_prompt = app.prompt.as_ref().is_some_and(|(k, _)| k.wants_popup());
+    if app.prompt.is_some() && !popup_prompt {
         let parts = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
         draw_prompt_bar(frame, app, parts[1]);
         area = parts[0];
@@ -43,6 +44,40 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         ViewMode::All => draw_all(frame, app, area),
         ViewMode::Single(view) => draw_single(frame, app, view, area),
     }
+    if popup_prompt {
+        draw_prompt_popup(frame, app, area);
+    }
+}
+
+fn draw_prompt_popup(frame: &mut Frame, app: &TuiApp, area: Rect) {
+    let Some((kind, input)) = &app.prompt else {
+        return;
+    };
+    let w = area.width.saturating_sub(2).clamp(1, 72).max(1);
+    let inner_w = w.saturating_sub(2).max(1) as usize;
+    let text_rows = (input.chars().count() / inner_w + 1) as u16;
+    let h = (text_rows + 2).clamp(3, area.height.clamp(3, 10));
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let rect = Rect::new(x, y, w, h);
+
+    frame.render_widget(Clear, rect);
+    let block = Block::bordered()
+        .title(kind.label())
+        .title_bottom(Line::styled(
+            " Enter: confirm  Esc: cancel ",
+            Style::default().fg(Color::DarkGray),
+        ))
+        .border_style(Style::default().fg(FOCUS_FG));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let mut body = input.clone();
+    body.push('█');
+    frame.render_widget(
+        Paragraph::new(body).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 fn draw_seq_banner(frame: &mut Frame, app: &TuiApp, area: Rect) {

@@ -194,6 +194,40 @@ fn stage_via_space_and_commit_updates_graph() {
     assert!(found, "new commit appears in graph");
 }
 
+#[test]
+fn commit_prompt_renders_as_centered_popup() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "changed\n").unwrap();
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Char(' '))]);
+    app.handle_input(vec![key(KeyCode::Char('c'))]);
+    for ch in "my message".chars() {
+        app.handle_input(vec![key(KeyCode::Char(ch))]);
+    }
+
+    let lines = screen(&mut app, 60, 24);
+    let label_row = lines
+        .iter()
+        .position(|l| l.contains("Commit message:"))
+        .expect("popup shows the label");
+    assert!(
+        label_row > 0 && label_row < lines.len() - 1,
+        "label is inside a boxed popup, not on the bottom bar (row {label_row})"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("my message")),
+        "typed message is visible in the popup"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("Esc: cancel")),
+        "popup shows the cancel hint"
+    );
+}
+
 fn type_text(app: &mut TuiApp, text: &str) {
     for ch in text.chars() {
         app.handle_input(vec![key(KeyCode::Char(ch))]);
