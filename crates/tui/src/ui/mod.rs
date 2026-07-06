@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Tabs, Wrap};
+use ratatui::widgets::{Block, Clear, Padding, Paragraph, Tabs, Wrap};
 
 use crate::app::{ChangesItem, Pane, Tab, TuiApp, View, ViewMode};
 
@@ -53,31 +53,88 @@ fn draw_prompt_popup(frame: &mut Frame, app: &TuiApp, area: Rect) {
     let Some((kind, input)) = &app.prompt else {
         return;
     };
-    let w = area.width.saturating_sub(2).clamp(1, 72).max(1);
-    let inner_w = w.saturating_sub(2).max(1) as usize;
-    let text_rows = (input.chars().count() / inner_w + 1) as u16;
-    let h = (text_rows + 2).clamp(3, area.height.clamp(3, 10));
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let surface = Color::Rgb(49, 50, 68);
+    let shadow = Color::Rgb(17, 17, 27);
+    let text = Color::Rgb(205, 214, 244);
+
+    let w = area.width.saturating_sub(6).clamp(24, 72).max(1);
+    let inner_w = w.saturating_sub(4).max(1) as usize;
+
+    let mut lines: Vec<Line> = wrap_plain(&kind.label(), inner_w)
+        .into_iter()
+        .map(|c| Line::styled(c, Style::default().fg(text)))
+        .collect();
+    if kind.wants_text() {
+        lines.push(Line::raw(""));
+        let field = format!("{input}█");
+        for chunk in wrap_plain(&field, inner_w) {
+            lines.push(Line::styled(chunk, Style::default().fg(FOCUS_FG)));
+        }
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(kind.hint(), Style::default().fg(Color::Gray)));
+
+    let h = (lines.len() as u16 + 2).clamp(3, area.height.max(3));
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
     let rect = Rect::new(x, y, w, h);
+
+    let shadow_rect = area.intersection(Rect::new(x + 2, y + 1, w, h));
+    frame.render_widget(Clear, shadow_rect);
+    frame.render_widget(Block::default().style(Style::default().bg(shadow)), shadow_rect);
 
     frame.render_widget(Clear, rect);
     let block = Block::bordered()
-        .title(kind.label())
-        .title_bottom(Line::styled(
-            " Enter: confirm  Esc: cancel ",
-            Style::default().fg(Color::DarkGray),
-        ))
-        .border_style(Style::default().fg(FOCUS_FG));
+        .padding(Padding::horizontal(1))
+        .border_style(Style::default().fg(FOCUS_FG).add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(surface));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
-
-    let mut body = input.clone();
-    body.push('█');
     frame.render_widget(
-        Paragraph::new(body).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .style(Style::default().bg(surface))
+            .wrap(Wrap { trim: false }),
         inner,
     );
+}
+
+fn wrap_plain(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+    for word in text.split_whitespace() {
+        let wlen = word.chars().count();
+        if wlen > width {
+            if cur_len > 0 {
+                out.push(std::mem::take(&mut cur));
+                cur_len = 0;
+            }
+            for ch in word.chars() {
+                if cur_len == width {
+                    out.push(std::mem::take(&mut cur));
+                    cur_len = 0;
+                }
+                cur.push(ch);
+                cur_len += 1;
+            }
+        } else if cur_len == 0 {
+            cur.push_str(word);
+            cur_len = wlen;
+        } else if cur_len + 1 + wlen <= width {
+            cur.push(' ');
+            cur.push_str(word);
+            cur_len += 1 + wlen;
+        } else {
+            out.push(std::mem::take(&mut cur));
+            cur.push_str(word);
+            cur_len = wlen;
+        }
+    }
+    if cur_len > 0 || out.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 fn draw_seq_banner(frame: &mut Frame, app: &TuiApp, area: Rect) {

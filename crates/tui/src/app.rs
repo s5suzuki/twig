@@ -204,7 +204,24 @@ impl Prompt {
     }
 
     pub fn wants_popup(&self) -> bool {
-        matches!(self, Prompt::Commit | Prompt::Amend)
+        matches!(self, Prompt::Commit | Prompt::Amend) || self.is_confirm() || self.is_choice()
+    }
+
+    fn is_confirm(&self) -> bool {
+        matches!(
+            self,
+            Prompt::ConfirmAmendPushed
+                | Prompt::ConfirmDiscardFiles { .. }
+                | Prompt::ConfirmDiscardLines { .. }
+                | Prompt::ConfirmResetHard { .. }
+                | Prompt::ConfirmOp { .. }
+                | Prompt::ConfirmDeleteRef { .. }
+                | Prompt::ConfirmForcePush { .. }
+                | Prompt::ConfirmSeqAbort
+                | Prompt::ConfirmStashDrop { .. }
+                | Prompt::ConfirmSearchReplace { .. }
+                | Prompt::ConfirmSubmodule { .. }
+        )
     }
 
     fn is_choice(&self) -> bool {
@@ -216,6 +233,16 @@ impl Prompt {
                 | Prompt::PickRenameBranch { .. }
                 | Prompt::StashOp { .. }
         )
+    }
+
+    pub fn hint(&self) -> &'static str {
+        if self.wants_text() {
+            "Enter: confirm   Esc: cancel"
+        } else if self.is_choice() {
+            "press the highlighted key   Esc: cancel"
+        } else {
+            "y: confirm   n / Esc: cancel"
+        }
     }
 
     pub fn label(&self) -> String {
