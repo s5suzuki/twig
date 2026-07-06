@@ -1,17 +1,20 @@
-# twig-git-client
+# twig
 
-A lightweight Git GUI client for Linux, inspired by VS Code's *Git Graph* extension.
+A lightweight Git client for Linux, inspired by VS Code's *Git Graph* extension.
+
+- **`twig`** — the GUI (eframe + egui)
+- **`twit`** — a terminal UI (ratatui)
 
 ## Features
 
-- **Commit graph** 
-- **Two-stage staging** 
-- **Side-by-side diff** 
+- **Commit graph**
+- **Two-stage staging**
+- **Side-by-side diff**
 - **Regex search & replace**
 - **Per-submodule scoping**
-- **Neovim integration** 
+- **Neovim integration**
 - **Embedded terminal / Neovim**
-- **Live worktree watching** 
+- **Live worktree watching**
 - **Vim-style keyboard navigation**
 
 ## Build & run
@@ -19,14 +22,31 @@ A lightweight Git GUI client for Linux, inspired by VS Code's *Git Graph* extens
 Requires a Rust toolchain.
 
 ```sh
-cargo run --release -- <repo path>   # path optional; defaults to the current directory
+cargo run --release --bin twig -- <repo path> 
+cargo run --release --bin twit -- <repo path>
 ```
 
-To install `twig`,
+## Install
 
 ```sh
-cargo install --path .
-twig <repo path>
+cargo install --path crates/gui   # installs `twig` (GUI)
+cargo install --path crates/tui   # installs `twit` (TUI)
+```
+
+Then:
+
+```sh
+twig <repo path>   # GUI
+twit <repo path>   # TUI (under Zellij, splits the current tab into panes)
+```
+
+## Under Zellij
+
+Inside Zellij, `twit` splits the current tab into panes (sidebar, changes, main, and a terminal below main) instead of one integrated window.
+
+```sh
+twit --new-tab <repo path>   # expand the split into a new tab
+twit --single <repo path>    # force one integrated window even under Zellij
 ```
 
 ## Keybindings
@@ -41,15 +61,15 @@ Press `?` in any pane (outside a text field or the terminal) to pop up a cheat-s
 | --- | --- | --- |
 | `Alt+h` | `focus-left` | Move focus to the pane on the left |
 | `Alt+l` | `focus-right` | Move focus to the pane on the right |
-| `Alt+k` | `focus-up` | Move focus up |
-| `Alt+j` | `focus-down` | Move focus down (to the terminal) |
+| `Alt+k` | `focus-up` | Move focus up *(GUI only)* |
+| `Alt+j` | `focus-down` | Move focus down, to the terminal *(GUI only)* |
 | `Tab` | `cycle-tab-fwd` | Next right-hand tab (only while the right pane is focused; passes through to the terminal) |
 | `Shift+Tab` | `cycle-tab-back` | Previous right-hand tab (only while the right pane is focused) |
 | `Ctrl+Tab` | `cycle-tab` | Cycle the right-hand tab (Graph → Diff → Search → Editor) |
-| `` Ctrl+` `` | `toggle-shell` | Toggle the bottom terminal |
+| `` Ctrl+` `` | `toggle-shell` | Toggle the bottom terminal *(GUI only)* |
 | `Ctrl+Shift+f` | `open-search` | Open the Search tab (repository-wide search & replace) |
-| `Ctrl+o` | `nav-back` | Go back in navigation history (also mouse back button) |
-| `Ctrl+i` | `nav-forward` | Go forward in navigation history (also mouse forward button) |
+| `Ctrl+o` | `nav-back` | Go back in navigation history, also mouse back button *(GUI only)* |
+| `Ctrl+i` | `nav-forward` | Go forward in navigation history, also mouse forward button *(GUI only)* |
 
 **Graph** (right pane, Graph tab)
 
@@ -64,7 +84,7 @@ Press `?` in any pane (outside a text field or the terminal) to pop up a cheat-s
 | `l` / `Enter` | `graph-open` | Open the commit / file under the cursor |
 | `e` | `graph-editor` | Open the file under the cursor in the editor |
 | `h` | `graph-collapse` | Collapse the expanded commit |
-| `Ctrl+.` / `Space .` | `graph-context-menu` | Open the context menu |
+| `Ctrl+.` / `Space .` | `graph-context-menu` | Open the context menu *(GUI only)* |
 | `o` | `graph-checkout` | Check out the commit / branch |
 | `b` | `graph-create-branch` | Create a branch at the commit |
 | `t` | `graph-create-tag` | Create a tag at the commit |
@@ -75,7 +95,7 @@ Press `?` in any pane (outside a text field or the terminal) to pop up a cheat-s
 | `B` | `graph-rebase-onto` | Rebase the current branch onto the commit |
 | `p` | `graph-push` | Push the current branch |
 | `f` | `graph-fetch` | Fetch from the remote |
-| -   | `graph-pull`  | Pull from the remote |
+|  -  | `graph-pull`  | Pull from the remote |
 
 **Diff** (right pane, Diff tab)
 
