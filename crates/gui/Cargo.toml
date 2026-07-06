@@ -10,8 +10,15 @@ path = "src/main.rs"
 [dependencies]
 twit-core = { path = "../core", default-features = false }
 twit-term = { path = "../term" }
-eframe = "0.35.0"
+eframe = { version = "0.35.0", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
 egui = "0.35"
+winit = "0.30"
 git2 = { version = "0.21.0", features = ["ssh", "https"] }
 regex = "1.12.4"
 
