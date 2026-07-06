@@ -1090,3 +1090,44 @@ fn graph_expands_commit_files_and_opens_per_file_diff() {
     assert!(app.selected_commit.is_none(), "second enter collapses");
     assert!(app.commit_files.is_empty());
 }
+
+#[test]
+fn graph_expands_uncommitted_node_and_opens_file_diff() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "first\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "second\n").unwrap();
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+
+    let top = &app.graph.rows[0];
+    assert!(top.is_uncommitted, "uncommitted node is the first graph row");
+
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert!(
+        app.selected_commit.is_some_and(|o| o.is_zero()),
+        "enter selects the uncommitted node"
+    );
+    assert_eq!(app.commit_files.len(), 1, "uncommitted file listed");
+    assert_eq!(app.active_tab, Tab::Graph, "stays on graph to pick a file");
+
+    let lines = screen(&mut app, 140, 30);
+    let node_idx = lines
+        .iter()
+        .position(|l| l.contains("Uncommitted"))
+        .expect("uncommitted row");
+    assert!(
+        lines[node_idx + 1].contains("a.txt"),
+        "file row under the uncommitted node: {:?}",
+        &lines[node_idx..node_idx + 2]
+    );
+
+    app.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Enter)]);
+    assert_eq!(app.selected_commit_file, Some("a.txt".to_string()));
+    assert_eq!(app.active_tab, Tab::Diff);
+    let lines = screen(&mut app, 140, 30);
+    let row = find_line(&lines, "second").expect("per-file diff rendered");
+    assert!(row.contains("first"), "old content on the left: {row}");
+}

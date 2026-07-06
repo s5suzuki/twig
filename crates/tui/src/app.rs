@@ -782,6 +782,10 @@ impl TuiApp {
     }
 
     fn open_commit_diff(&mut self, oid: Oid) {
+        if oid.is_zero() {
+            self.open_uncommitted(oid);
+            return;
+        }
         match repo::commit_diff(&self.selected, oid) {
             Ok(d) => {
                 self.diff = d;
@@ -802,15 +806,62 @@ impl TuiApp {
         }
     }
 
+    fn open_uncommitted(&mut self, oid: Oid) {
+        self.commit_files = self.uncommitted_files();
+        self.diff = FileDiff {
+            note: Some("Select a file".to_string()),
+            ..FileDiff::empty()
+        };
+        self.selected_commit = Some(oid);
+        self.selected_commit_file = None;
+        self.selected_file = None;
+        self.diff_hl = DiffHighlighter::default();
+        self.diff_sig = 0;
+        self.diff_nav.reset();
+        self.diff_scroll = 0;
+        self.diff_center = false;
+        self.active_tab = Tab::Diff;
+        self.focus = Pane::RightTab;
+        self.error = None;
+    }
+
+    fn uncommitted_files(&self) -> Vec<CommitFile> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for e in self.unstaged.iter().chain(self.staged.iter()) {
+            if seen.insert(e.path.clone()) {
+                out.push(CommitFile {
+                    path: e.path.clone(),
+                    kind: e.kind,
+                });
+            }
+        }
+        out
+    }
+
+    fn worktree_file_staged(&self, file: &str) -> bool {
+        !self.unstaged.iter().any(|e| e.path == file)
+            && self.staged.iter().any(|e| e.path == file)
+    }
+
     fn open_commit_file_diff(&mut self, oid: Oid, path: String) {
-        match repo::commit_file_diff(&self.selected, oid, &path) {
+        let result = if oid.is_zero() {
+            let staged = self.worktree_file_staged(&path);
+            repo::file_diff(&self.selected, &path, diff_mode(staged))
+        } else {
+            repo::commit_file_diff(&self.selected, oid, &path)
+        };
+        match result {
             Ok(d) => {
                 self.diff = d;
                 self.selected_commit = Some(oid);
                 self.selected_commit_file = Some(path.clone());
                 if self.commit_files.is_empty() {
-                    self.commit_files =
-                        repo::commit_files(&self.selected, oid).unwrap_or_default();
+                    self.commit_files = if oid.is_zero() {
+                        self.uncommitted_files()
+                    } else {
+                        repo::commit_files(&self.selected, oid).unwrap_or_default()
+                    };
                 }
                 self.selected_file = None;
                 self.rebuild_highlight(&path);
@@ -2667,9 +2718,6 @@ impl TuiApp {
         match items.get(self.graph_cursor.min(items.len().saturating_sub(1))) {
             Some(GraphItem::Commit(row)) => {
                 let row = &self.graph.rows[*row];
-                if row.is_uncommitted {
-                    return;
-                }
                 if self.selected_commit == Some(row.id) && self.selected_commit_file.is_none() {
                     self.collapse_commit();
                     return;
