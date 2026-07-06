@@ -82,7 +82,7 @@ pub fn split_current_tab(repo: &Path, token: &str) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     run_pane(&exe, repo, "changes", "right", &["--view", "changes", "--session", token, "--cols", "36"])?;
     run_pane(&exe, repo, "graph | diff", "right", &["--view", "main", "--session", token])?;
-    run_pane(&exe, repo, "terminal", "down", &["--shell", "--session", token])?;
+    run_pane(&exe, repo, "terminal", "down", &["--shell", "--session", token, "--shrink", "4"])?;
     let _ = action(&["move-focus", "up"]);
     let _ = action(&["move-focus", "left"]);
     Ok(())
@@ -114,11 +114,11 @@ pub fn close_pane(id: &str) {
     let _ = action(&["close-pane", "--pane-id", id]);
 }
 
-pub fn resize_self_step() {
+pub fn resize_self_step(direction: &str) {
     if let Ok(id) = std::env::var("ZELLIJ_PANE_ID")
         && !id.is_empty()
     {
-        let _ = action(&["resize", "decrease", "right", "--pane-id", &id]);
+        let _ = action(&["resize", "decrease", direction, "--pane-id", &id]);
     }
 }
 

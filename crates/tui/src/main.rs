@@ -18,6 +18,7 @@ struct Args {
     new_tab: bool,
     shell: bool,
     cols: Option<u16>,
+    shrink: Option<u16>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -29,6 +30,7 @@ fn parse_args() -> Result<Args, String> {
         new_tab: false,
         shell: false,
         cols: None,
+        shrink: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -47,6 +49,10 @@ fn parse_args() -> Result<Args, String> {
             "--cols" => {
                 let v = it.next().ok_or("--cols requires a value")?;
                 args.cols = Some(v.parse().map_err(|_| format!("invalid --cols: {v}"))?);
+            }
+            "--shrink" => {
+                let v = it.next().ok_or("--shrink requires a value")?;
+                args.shrink = Some(v.parse().map_err(|_| format!("invalid --shrink: {v}"))?);
             }
             _ => args.repo = a,
         }
@@ -71,7 +77,7 @@ fn main() {
     };
 
     if args.shell {
-        run_shell(&path, args.session);
+        run_shell(&path, args.session, args.shrink);
     }
 
     let mut view = args.view;
@@ -142,7 +148,7 @@ fn main() {
     }
 }
 
-fn run_shell(repo: &std::path::Path, session_token: Option<String>) -> ! {
+fn run_shell(repo: &std::path::Path, session_token: Option<String>, shrink: Option<u16>) -> ! {
     let token = session_token.unwrap_or_else(|| session::repo_token(repo));
     let dir = session::session_dir(&token);
     if let Ok(id) = std::env::var("ZELLIJ_PANE_ID")
@@ -158,6 +164,9 @@ fn run_shell(repo: &std::path::Path, session_token: Option<String>) -> ! {
             std::process::exit(1);
         }
     };
+    if let Some(steps) = shrink {
+        shrink_pane_height(steps);
+    }
     loop {
         if let Ok(Some(status)) = child.try_wait() {
             std::process::exit(status.code().unwrap_or(0));
@@ -174,6 +183,52 @@ fn run_shell(repo: &std::path::Path, session_token: Option<String>) -> ! {
             std::process::exit(0);
         }
         std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+fn shrink_pane_height(steps: u16) {
+    let has_pane = std::env::var("ZELLIJ_PANE_ID").is_ok_and(|id| !id.is_empty());
+    if !has_pane {
+        return;
+    }
+    let read = || ratatui::crossterm::terminal::size().ok().map(|(_, h)| h);
+    let overall = std::time::Instant::now() + Duration::from_secs(5);
+
+    // A freshly-created zellij pane briefly reports a height of 0; wait for a real size.
+    // Each `resize decrease up` step shrinks by a fixed fraction of the tab height, so a
+    // fixed step count (not a row target) is independent of the terminal size.
+    let mut h = loop {
+        if std::time::Instant::now() >= overall {
+            return;
+        }
+        match read() {
+            Some(v) if v >= 3 => break v,
+            _ => std::thread::sleep(Duration::from_millis(60)),
+        }
+    };
+
+    for _ in 0..steps {
+        if std::time::Instant::now() >= overall {
+            break;
+        }
+        zellij::resize_self_step("up");
+        // zellij applies a resize asynchronously, so wait until the height actually drops
+        // (up to 600ms) rather than polling on a fixed, too-short interval.
+        let step_deadline = std::time::Instant::now() + Duration::from_millis(600);
+        let mut changed = false;
+        while std::time::Instant::now() < step_deadline {
+            std::thread::sleep(Duration::from_millis(30));
+            if let Some(v) = read()
+                && v < h
+            {
+                h = v;
+                changed = true;
+                break;
+            }
+        }
+        if !changed {
+            break;
+        }
     }
 }
 
@@ -210,7 +265,7 @@ fn run(
                     s.step = p - w;
                 }
                 if w.saturating_sub(s.target) > s.step / 2 {
-                    zellij::resize_self_step();
+                    zellij::resize_self_step("right");
                     s.prev = Some(w);
                 }
             }
