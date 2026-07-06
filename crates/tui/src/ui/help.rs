@@ -14,8 +14,6 @@ fn tui_supported(action: Action) -> bool {
         Action::FocusUp
             | Action::FocusDown
             | Action::ToggleShell
-            | Action::NavBack
-            | Action::NavForward
             | Action::GraphContextMenu
     )
 }

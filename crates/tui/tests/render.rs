@@ -165,6 +165,89 @@ fn visual_select_and_yank_sets_pending_copy() {
 }
 
 #[test]
+fn nav_history_back_and_forward_between_file_diffs() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "a2\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "b2\n").unwrap();
+
+    let ctrl = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    let alt = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
+    app.track_nav();
+    assert_eq!(app.selected_file.as_ref().map(|(p, _)| p.as_str()), Some("a.txt"));
+
+    app.handle_input(vec![alt('h'), key(KeyCode::Char('j')), key(KeyCode::Enter)]);
+    app.track_nav();
+    assert_eq!(app.selected_file.as_ref().map(|(p, _)| p.as_str()), Some("b.txt"));
+
+    app.handle_input(vec![ctrl('o')]);
+    app.track_nav();
+    assert_eq!(
+        app.selected_file.as_ref().map(|(p, _)| p.as_str()),
+        Some("a.txt"),
+        "ctrl+o returns to the previously viewed diff"
+    );
+
+    app.handle_input(vec![ctrl('i')]);
+    app.track_nav();
+    assert_eq!(
+        app.selected_file.as_ref().map(|(p, _)| p.as_str()),
+        Some("b.txt"),
+        "ctrl+i moves forward again"
+    );
+
+    app.handle_input(vec![ctrl('i')]);
+    app.track_nav();
+    assert_eq!(
+        app.selected_file.as_ref().map(|(p, _)| p.as_str()),
+        Some("b.txt"),
+        "forward at the end is a no-op"
+    );
+}
+
+#[test]
+fn nav_back_from_first_opened_diff_returns_to_changes() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "a2\n").unwrap();
+
+    let ctrl = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    assert_eq!(app.focus, Pane::Changes);
+
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('l')),
+    ]);
+    app.track_nav();
+    assert_eq!(app.active_tab, Tab::Diff);
+    assert_eq!(app.focus, Pane::RightTab, "l on a file moves into the diff");
+
+    app.handle_input(vec![ctrl('o')]);
+    app.track_nav();
+    assert_eq!(
+        app.focus,
+        Pane::Changes,
+        "ctrl+o after opening the first diff returns focus to changes"
+    );
+}
+
+#[test]
 fn stage_via_space_and_commit_updates_graph() {
     let dir = temp_repo();
     std::fs::write(dir.join("a.txt"), "a\n").unwrap();

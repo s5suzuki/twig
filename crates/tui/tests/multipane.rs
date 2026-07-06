@@ -252,6 +252,56 @@ fn graph_file_selection_shows_per_file_diff_in_main_pane() {
 }
 
 #[test]
+fn nav_history_in_main_pane_walks_diffs_shown_by_changes_pane() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "a2\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "b2\n").unwrap();
+
+    let sdir = temp_dir("session");
+    let mut changes = pane(&dir, &sdir, View::Changes);
+    let mut main = pane(&dir, &sdir, View::Main);
+    main.sync_session();
+    main.track_nav();
+
+    changes.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Enter),
+    ]);
+    changes.pending_focus_jump = false;
+    assert!(main.sync_session());
+    main.track_nav();
+    assert_eq!(main.selected_file, Some(("a.txt".to_string(), false)));
+
+    changes.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Enter)]);
+    changes.pending_focus_jump = false;
+    assert!(main.sync_session());
+    main.track_nav();
+    assert_eq!(main.selected_file, Some(("b.txt".to_string(), false)));
+
+    let ctrl = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    main.handle_input(vec![ctrl('o')]);
+    main.track_nav();
+    assert_eq!(
+        main.selected_file,
+        Some(("a.txt".to_string(), false)),
+        "ctrl+o in the diff pane returns to the previously shown diff"
+    );
+
+    main.handle_input(vec![ctrl('i')]);
+    main.track_nav();
+    assert_eq!(
+        main.selected_file,
+        Some(("b.txt".to_string(), false)),
+        "ctrl+i moves forward again"
+    );
+}
+
+#[test]
 fn sidebar_repo_switch_rescopes_other_panes() {
     let child = temp_repo();
     std::fs::write(child.join("c.txt"), "c\n").unwrap();

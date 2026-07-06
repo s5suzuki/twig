@@ -353,6 +353,7 @@ fn run(
         if app.quit {
             return Ok(());
         }
+        app.track_nav();
         if dirty {
             terminal.draw(|frame| ui::draw(frame, app))?;
         }
