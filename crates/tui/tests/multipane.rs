@@ -339,20 +339,25 @@ fn sidebar_repo_switch_rescopes_other_panes() {
 }
 
 #[test]
-fn quit_in_one_pane_stops_the_others() {
+fn quit_in_one_pane_leaves_the_others_running() {
     let dir = temp_repo();
     let sdir = temp_dir("session");
     let mut a = pane(&dir, &sdir, View::Changes);
     let mut b = pane(&dir, &sdir, View::Main);
     b.sync_session();
 
+    // Plain `q` is no longer a quit binding — quitting must be deliberate.
     a.handle_input(vec![key(KeyCode::Char('q'))]);
+    assert!(!a.quit, "plain q must not quit");
+
+    // `Q` quits only this pane and never broadcasts to siblings.
+    a.handle_input(vec![key(KeyCode::Char('Q'))]);
     assert!(a.quit);
-    assert!(a.quit_broadcast, "locally initiated quit broadcasts");
+    assert!(!a.quit_broadcast, "quit stays local, no cross-pane broadcast");
     let broadcast = a.quit_broadcast;
     a.session.take().unwrap().shutdown(broadcast);
 
-    assert!(b.sync_session());
-    assert!(b.quit, "sibling pane quits on next tick");
-    assert!(!b.quit_broadcast, "received quit is not re-broadcast");
+    // The sibling keeps running; killing/keeping panes is Zellij's job now.
+    b.sync_session();
+    assert!(!b.quit, "sibling pane keeps running when one pane quits");
 }

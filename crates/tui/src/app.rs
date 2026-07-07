@@ -680,7 +680,7 @@ impl TuiApp {
             },
             view_mode,
             session: None,
-            quit_broadcast: true,
+            quit_broadcast: false,
             keymap: Keymap::from_config(&config.keys),
             pending_prefix: None,
             error: None,
@@ -1164,7 +1164,7 @@ impl TuiApp {
     fn handle_key(&mut self, nk: (Modifiers, Key)) {
         let mut queue = KeyQueue(vec![nk]);
 
-        if queue.take(Modifiers::NONE, Key::Q) || queue.take(Modifiers::CTRL, Key::C) {
+        if queue.take(Modifiers::CTRL, Key::C) {
             self.quit = true;
             return;
         }
@@ -1211,6 +1211,7 @@ impl TuiApp {
                         | Action::OpenSearch
                         | Action::NavBack
                         | Action::NavForward
+                        | Action::Quit
                 )
             });
         for a in global {
@@ -1226,6 +1227,7 @@ impl TuiApp {
                 Action::NavForward => {
                     self.nav_go_forward();
                 }
+                Action::Quit => self.quit = true,
                 _ => {}
             }
         }
@@ -1254,7 +1256,7 @@ impl TuiApp {
         let nav = self
             .keymap
             .resolve(queue, Context::Global, &mut self.pending_prefix, |a| {
-                matches!(a, Action::NavBack | Action::NavForward)
+                matches!(a, Action::NavBack | Action::NavForward | Action::Quit)
             });
         for a in nav {
             match a {
@@ -1264,6 +1266,7 @@ impl TuiApp {
                 Action::NavForward => {
                     self.nav_go_forward();
                 }
+                Action::Quit => self.quit = true,
                 _ => {}
             }
         }

@@ -66,7 +66,7 @@ fn extras(lines: &mut Vec<Line<'static>>) {
         Style::default().add_modifier(Modifier::BOLD),
     ));
     for (keys, desc) in [
-        ("q / Ctrl+C", "Quit (all panes in multipane mode)"),
+        ("Q / Ctrl+C", "Quit this pane"),
         ("?", "Toggle this help"),
         (",", "Open the settings overlay"),
         ("c / a / z", "Changes: commit / amend / stash"),

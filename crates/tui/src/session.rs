@@ -244,11 +244,7 @@ impl Session {
                 quit: true,
             };
         };
-        let quit = state.quit
-            || state
-                .panes
-                .values()
-                .any(|p| *p != self.pid && !pid_alive(*p));
+        let quit = state.quit;
         let changed = if state.generation > self.last_gen {
             self.last_gen = state.generation;
             Some(state)
@@ -344,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn tick_reports_change_once_and_detects_quit_and_dead_sibling() {
+    fn tick_reports_change_once_and_detects_quit_broadcast() {
         let dir = temp_dir();
         let repo = Path::new("/repo/d");
         let pid = std::process::id();
@@ -364,20 +360,23 @@ mod tests {
     }
 
     #[test]
-    fn dead_pid_in_panes_triggers_quit() {
+    fn dead_pid_in_panes_does_not_trigger_quit() {
         let dir = temp_dir();
         let repo = Path::new("/repo/e");
         let mut me = Session::join(&dir, "main", std::process::id(), repo, None).unwrap();
         let dead = std::process::Command::new("true").spawn().unwrap();
         let dead_pid = dead.id();
-        let mut sibling = Session::join(&dir, "changes", dead_pid, repo, None).unwrap();
+        let sibling = Session::join(&dir, "changes", dead_pid, repo, None).unwrap();
         let _ = sibling;
         let mut child = dead;
         child.wait().unwrap();
         while pid_alive(dead_pid) {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(me.tick().quit, "dead sibling pid must trigger quit");
+        assert!(
+            !me.tick().quit,
+            "a dead sibling pane must not quit the others; pane lifecycle is Zellij's job"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

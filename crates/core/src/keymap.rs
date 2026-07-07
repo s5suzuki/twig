@@ -230,6 +230,7 @@ pub enum Action {
     OpenSearch,
     NavBack,
     NavForward,
+    Quit,
 
     DiffFind,
     DiffDown,
@@ -338,6 +339,7 @@ impl Action {
             "nav-forward",
             "Go forward in navigation history",
         ),
+        (Action::Quit, "quit", "Quit this pane"),
         (
             Action::DiffFind,
             "diff-find",
@@ -782,6 +784,7 @@ impl Keymap {
         km.push(Global, ctrl.plus(shift), F, OpenSearch);
         km.push(Global, ctrl, O, NavBack);
         km.push(Global, ctrl, I, NavForward);
+        km.push(Global, shift, Q, Quit);
 
         km.push(Diff, n, Slash, DiffFind);
         km.push(Diff, n, J, DiffDown);
