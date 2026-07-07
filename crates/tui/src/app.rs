@@ -631,6 +631,7 @@ impl TuiApp {
             },
             active_tab: match view_mode {
                 ViewMode::Single(View::Diff) => Tab::Diff,
+                ViewMode::Single(View::Main) => Tab::Editor,
                 _ => Tab::Graph,
             },
             view_mode,

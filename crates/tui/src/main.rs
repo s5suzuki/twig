@@ -123,6 +123,10 @@ fn main() {
         }
     }
 
+    if app.active_tab == Tab::Editor {
+        app.ensure_editor();
+    }
+
     let (watch_tx, watch_rx) = mpsc::channel::<()>();
     let watcher = WorktreeWatcher::new(
         &path,
