@@ -68,13 +68,21 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
                 lines.push(file_row(app, *k, r, focused));
                 r.unwrap_or(0)
             }
+            GraphItem::Folder(path) => {
+                let r = parent_commit_row(&items, i, &app.graph.rows);
+                lines.push(folder_row(app, path, r, focused));
+                r.unwrap_or(0)
+            }
         };
         let next_is_file = matches!(
             items.get(i + 1),
-            Some(GraphItem::File(_) | GraphItem::Msg(_))
+            Some(GraphItem::File(_) | GraphItem::Msg(_) | GraphItem::Folder(_))
         );
         if !next_is_file && commit_row + 1 < app.graph.rows.len() {
-            lines.push(connector_row(&app.graph.rows[commit_row], app.graph.max_col));
+            lines.push(connector_row(
+                &app.graph.rows[commit_row],
+                app.graph.max_col,
+            ));
         }
     }
     lines.truncate(h);
@@ -82,10 +90,12 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
 }
 
 fn parent_commit_row(items: &[GraphItem], from: usize, rows: &[GraphRow]) -> Option<usize> {
-    (0..=from.min(items.len() - 1)).rev().find_map(|i| match items[i] {
-        GraphItem::Commit(r) if r < rows.len() => Some(r),
-        _ => None,
-    })
+    (0..=from.min(items.len() - 1))
+        .rev()
+        .find_map(|i| match items[i] {
+            GraphItem::Commit(r) if r < rows.len() => Some(r),
+            _ => None,
+        })
 }
 
 fn msg_row(app: &TuiApp, m: usize, commit_row: Option<usize>) -> Line<'static> {
@@ -109,15 +119,44 @@ fn file_row(app: &TuiApp, k: usize, commit_row: Option<usize>, focused: bool) ->
     let Some(f) = app.commit_files.get(k) else {
         return Line::from(spans);
     };
+    let tree = app.config.graph_files_tree;
+    let depth = if tree { f.path.matches('/').count() } else { 0 };
+    let label = if tree {
+        f.path.rsplit('/').next().unwrap_or(&f.path)
+    } else {
+        f.path.as_str()
+    };
     let mut style = Style::default();
     if focused {
         style = style.add_modifier(Modifier::REVERSED);
     }
+    spans.push(Span::raw("  ".repeat(depth)));
     spans.push(Span::styled(
         format!("{} ", f.kind.marker()),
         style.fg(Color::Yellow),
     ));
-    spans.push(Span::styled(f.path.clone(), style));
+    spans.push(Span::styled(label.to_string(), style));
+    Line::from(spans)
+}
+
+fn folder_row(app: &TuiApp, path: &str, commit_row: Option<usize>, focused: bool) -> Line<'static> {
+    let mut spans = match commit_row {
+        Some(r) => lane_spans(&app.graph.rows[r], app.graph.max_col),
+        None => vec![Span::raw(" ".repeat(app.graph.max_col * 2 + 1))],
+    };
+    spans.push(Span::raw("   "));
+    let depth = path.matches('/').count();
+    let open = !app.commit_folds.contains(path);
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let mut style = Style::default();
+    if focused {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+    spans.push(Span::raw("  ".repeat(depth)));
+    spans.push(Span::styled(
+        format!("{} {}/", if open { "▾" } else { "▸" }, name),
+        style.fg(Color::Cyan),
+    ));
     Line::from(spans)
 }
 
@@ -221,7 +260,9 @@ fn render_row(
     if row.is_uncommitted {
         spans.push(Span::styled(
             row.summary.clone(),
-            text_style.fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            text_style
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         ));
         return Line::from(spans);
     }

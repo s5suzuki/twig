@@ -126,6 +126,7 @@ pub struct TuiApp {
     pub selected_commit: Option<Oid>,
     pub selected_commit_file: Option<String>,
     pub commit_files: Vec<CommitFile>,
+    pub commit_folds: HashSet<String>,
     pub commit_detail: Vec<String>,
     pub diff: FileDiff,
     pub diff_nav: DiffNavState,
@@ -217,6 +218,7 @@ impl TuiApp {
             selected_commit: None,
             selected_commit_file: None,
             commit_files: Vec::new(),
+            commit_folds: HashSet::new(),
             commit_detail: Vec::new(),
             diff: FileDiff::empty(),
             diff_nav: DiffNavState::default(),
@@ -289,6 +291,7 @@ impl TuiApp {
             self.selected_commit = None;
             self.selected_commit_file = None;
             self.commit_files.clear();
+            self.commit_folds.clear();
             self.commit_detail.clear();
             self.graph_cursor = self.graph_cursor.min(self.graph_last());
         }
@@ -314,6 +317,7 @@ impl TuiApp {
         self.selected_commit = None;
         self.selected_commit_file = None;
         self.commit_files.clear();
+        self.commit_folds.clear();
         self.commit_detail.clear();
         self.diff = FileDiff::empty();
         self.diff_hl = DiffHighlighter::default();

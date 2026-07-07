@@ -5,6 +5,7 @@ pub enum GraphItem {
     Commit(usize),
     Msg(usize),
     File(usize),
+    Folder(String),
 }
 
 pub(super) fn skip_msg(items: &[GraphItem], i: usize, forward: bool) -> usize {
@@ -32,8 +33,17 @@ impl TuiApp {
                         out.push(GraphItem::Msg(m));
                     }
                 }
-                for k in 0..self.commit_files.len() {
-                    out.push(GraphItem::File(k));
+                for r in repo::commit_file_rows(
+                    &self.commit_files,
+                    self.config.graph_files_tree,
+                    &self.commit_folds,
+                ) {
+                    match r.kind {
+                        repo::CommitRowKind::File(k) => out.push(GraphItem::File(k)),
+                        repo::CommitRowKind::Folder { path, .. } => {
+                            out.push(GraphItem::Folder(path))
+                        }
+                    }
                 }
             }
         }
@@ -163,6 +173,7 @@ impl TuiApp {
         self.selected_commit = None;
         self.selected_commit_file = None;
         self.commit_files.clear();
+        self.commit_folds.clear();
         self.commit_detail.clear();
         self.diff = FileDiff::empty();
         self.diff_hl = DiffHighlighter::default();
@@ -257,7 +268,7 @@ impl TuiApp {
         let cursor = self.graph_cursor.min(items.len().checked_sub(1)?);
         let row = match items.get(cursor)? {
             GraphItem::Commit(r) => *r,
-            GraphItem::Msg(_) | GraphItem::File(_) => {
+            GraphItem::Msg(_) | GraphItem::File(_) | GraphItem::Folder(_) => {
                 (0..cursor).rev().find_map(|i| match items[i] {
                     GraphItem::Commit(r) => Some(r),
                     _ => None,
@@ -317,15 +328,28 @@ impl TuiApp {
                     self.pending_focus_jump = self.error.is_none();
                 }
             }
+            Some(GraphItem::Folder(path)) => {
+                let path = path.clone();
+                self.toggle_commit_fold(path);
+            }
             Some(GraphItem::Msg(_)) | None => {}
+        }
+    }
+
+    pub(super) fn toggle_commit_fold(&mut self, path: String) {
+        if !self.commit_folds.remove(&path) {
+            self.commit_folds.insert(path);
         }
     }
 
     pub(super) fn graph_collapse(&mut self) {
         let items = self.graph_items();
         let cursor = self.graph_cursor.min(items.len().saturating_sub(1));
-        match items.get(cursor) {
-            Some(GraphItem::File(_) | GraphItem::Msg(_)) => {
+        match items.get(cursor).cloned() {
+            Some(GraphItem::Folder(path)) if !self.commit_folds.contains(&path) => {
+                self.commit_folds.insert(path);
+            }
+            Some(GraphItem::File(_) | GraphItem::Msg(_) | GraphItem::Folder(_)) => {
                 if let Some(ci) = (0..=cursor)
                     .rev()
                     .find(|&i| matches!(items[i], GraphItem::Commit(_)))
@@ -334,7 +358,7 @@ impl TuiApp {
                 }
             }
             Some(GraphItem::Commit(row))
-                if self.selected_commit == Some(self.graph.rows[*row].id) =>
+                if self.selected_commit == Some(self.graph.rows[row].id) =>
             {
                 self.collapse_commit();
             }

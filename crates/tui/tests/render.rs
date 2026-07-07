@@ -117,7 +117,10 @@ fn graph_renders_merge_topology_with_connectors() {
     std::fs::write(dir.join("m.txt"), "m\n").unwrap();
     git(&dir, &["add", "-A"]);
     git(&dir, &["commit", "-qm", "main work"]);
-    git(&dir, &["merge", "-q", "--no-ff", "feature", "-m", "merge feature"]);
+    git(
+        &dir,
+        &["merge", "-q", "--no-ff", "feature", "-m", "merge feature"],
+    );
 
     let mut app = TuiApp::new(&dir).unwrap();
     let lines = screen(&mut app, 140, 30);
@@ -129,7 +132,10 @@ fn graph_renders_merge_topology_with_connectors() {
     let init = find_line(&lines, "init").expect("init row");
     assert!(init.contains("●─╯"), "feature lane merges back: {init}");
 
-    let merge_idx = lines.iter().position(|l| l.contains("merge feature")).unwrap();
+    let merge_idx = lines
+        .iter()
+        .position(|l| l.contains("merge feature"))
+        .unwrap();
     let connector = &lines[merge_idx + 1];
     assert!(
         connector.trim_start().starts_with("│"),
@@ -185,11 +191,17 @@ fn nav_history_back_and_forward_between_file_diffs() {
         key(KeyCode::Enter),
     ]);
     app.track_nav();
-    assert_eq!(app.selected_file.as_ref().map(|(p, _)| p.as_str()), Some("a.txt"));
+    assert_eq!(
+        app.selected_file.as_ref().map(|(p, _)| p.as_str()),
+        Some("a.txt")
+    );
 
     app.handle_input(vec![alt('h'), key(KeyCode::Char('j')), key(KeyCode::Enter)]);
     app.track_nav();
-    assert_eq!(app.selected_file.as_ref().map(|(p, _)| p.as_str()), Some("b.txt"));
+    assert_eq!(
+        app.selected_file.as_ref().map(|(p, _)| p.as_str()),
+        Some("b.txt")
+    );
 
     app.handle_input(vec![ctrl('o')]);
     app.track_nav();
@@ -257,7 +269,11 @@ fn stage_via_space_and_commit_updates_graph() {
 
     let mut app = TuiApp::new(&dir).unwrap();
     app.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Char(' '))]);
-    assert_eq!(app.staged.len(), 1, "space on the Changes group stages all files");
+    assert_eq!(
+        app.staged.len(),
+        1,
+        "space on the Changes group stages all files"
+    );
 
     app.handle_input(vec![key(KeyCode::Char('c'))]);
     assert!(app.prompt.is_some(), "c opens commit prompt");
@@ -344,7 +360,10 @@ fn amend_prompt_prefills_head_message_and_rewrites_commit() {
     let commits = app.graph.rows.iter().filter(|r| !r.is_uncommitted).count();
     assert_eq!(commits, 1, "amend must not add a commit");
     let lines = screen(&mut app, 140, 30);
-    assert!(find_line(&lines, "first v2").is_some(), "graph shows amended message");
+    assert!(
+        find_line(&lines, "first v2").is_some(),
+        "graph shows amended message"
+    );
 }
 
 #[test]
@@ -414,7 +433,11 @@ fn visual_stage_selection_stages_only_selected_lines() {
     assert_eq!(app.active_tab, Tab::Diff);
 
     app.handle_input(vec![key(KeyCode::Char('s'))]);
-    assert_eq!(app.staged.len(), 1, "partially staged file appears in staged");
+    assert_eq!(
+        app.staged.len(),
+        1,
+        "partially staged file appears in staged"
+    );
     assert_eq!(app.unstaged.len(), 1, "remaining lines stay unstaged");
     assert_eq!(count_staged_changes(&dir), 1, "only the cursor line staged");
 }
@@ -680,12 +703,21 @@ fn changes_folder_row_bulk_stages_and_folds() {
     ]);
     let lines = screen(&mut app, 140, 30);
     assert!(find_line(&lines, "▸ src/").is_some(), "h folds the folder");
-    assert!(find_line(&lines, "a.rs").is_none(), "children hidden while folded");
-    assert!(find_line(&lines, "top.txt").is_some(), "siblings still listed");
+    assert!(
+        find_line(&lines, "a.rs").is_none(),
+        "children hidden while folded"
+    );
+    assert!(
+        find_line(&lines, "top.txt").is_some(),
+        "siblings still listed"
+    );
 
     app.handle_input(vec![key(KeyCode::Char('l'))]);
     let lines = screen(&mut app, 140, 30);
-    assert!(find_line(&lines, "▾ src/").is_some(), "l unfolds the folder");
+    assert!(
+        find_line(&lines, "▾ src/").is_some(),
+        "l unfolds the folder"
+    );
     assert!(find_line(&lines, "a.rs").is_some());
 
     app.handle_input(vec![key(KeyCode::Char(' '))]);
@@ -883,7 +915,10 @@ fn conflicted_cherry_pick_shows_banner_and_aborts() {
     assert!(find_line(&lines, "Abort the in-progress operation? (y/n)").is_some());
     app.handle_input(vec![key(KeyCode::Char('y'))]);
     assert!(app.seq.is_none(), "abort clears the sequencer");
-    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "main\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "main\n"
+    );
 }
 
 #[test]
@@ -925,7 +960,10 @@ fn search_tab_finds_and_replaces_across_repo() {
         std::fs::read_to_string(dir.join("b.txt")).unwrap(),
         "no match here\nthread again\n"
     );
-    assert!(app.search.hits.is_empty(), "results refreshed after replace");
+    assert!(
+        app.search.hits.is_empty(),
+        "results refreshed after replace"
+    );
 }
 
 #[test]
@@ -965,14 +1003,21 @@ fn search_tab_tree_folds_and_include_filter() {
     app.handle_input(vec![key(KeyCode::Char('i'))]);
     type_text(&mut app, "**/*.rs");
     app.handle_input(vec![key(KeyCode::Enter)]);
-    assert_eq!(app.search.hits.len(), 1, "include glob keeps only the rust file");
+    assert_eq!(
+        app.search.hits.len(),
+        1,
+        "include glob keeps only the rust file"
+    );
     assert_eq!(app.search.hits[0].path, "src/a.rs");
 
     // rows: [Dir src, File a.rs, Line]; step down to the match line and open it.
     app.handle_input(vec![key(KeyCode::Char('j'))]);
     app.handle_input(vec![key(KeyCode::Char('j'))]);
     app.handle_input(vec![key(KeyCode::Enter)]);
-    let (path, line) = app.pending_editor.clone().expect("Enter queues an editor open");
+    let (path, line) = app
+        .pending_editor
+        .clone()
+        .expect("Enter queues an editor open");
     assert!(path.ends_with("src/a.rs"));
     assert_eq!(line, Some(1), "jump carries the match line number");
 }
@@ -1060,7 +1105,12 @@ fn sidebar_initializes_submodule_via_prompt() {
     let _ = std::fs::remove_dir_all(&clone);
     git(
         &parent,
-        &["clone", "-q", parent.to_str().unwrap(), clone.to_str().unwrap()],
+        &[
+            "clone",
+            "-q",
+            parent.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
     );
 
     let mut app = TuiApp::new(&clone).unwrap();
@@ -1152,6 +1202,72 @@ fn commit_diff_shows_full_multiline_message() {
 }
 
 #[test]
+fn graph_expands_commit_files_as_tree_with_folding() {
+    let dir = temp_repo();
+    std::fs::create_dir_all(dir.join("src/app")).unwrap();
+    std::fs::write(dir.join("src/app/graph.rs"), "one\n").unwrap();
+    std::fs::write(dir.join("src/main.rs"), "main\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::write(dir.join("src/app/graph.rs"), "two\n").unwrap();
+    std::fs::write(dir.join("src/main.rs"), "main2\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "tree change"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert_eq!(app.commit_files.len(), 2);
+
+    let lines = screen(&mut app, 140, 30);
+    let commit_idx = lines
+        .iter()
+        .position(|l| l.contains("tree change"))
+        .expect("commit row");
+    let tail = lines[commit_idx + 1..].join("\n");
+    assert!(
+        tail.contains("▾ src/"),
+        "top-level folder row rendered as a tree: {tail}"
+    );
+    assert!(
+        tail.contains("▾ app/"),
+        "nested folder row rendered as a tree: {tail}"
+    );
+    assert!(
+        tail.contains("graph.rs") && !tail.contains("src/app/graph.rs"),
+        "file shown by basename under its folder: {tail}"
+    );
+
+    let src_folder = app
+        .graph_items()
+        .iter()
+        .position(|it| matches!(it, twit::app::GraphItem::Folder(p) if p == "src"))
+        .expect("src folder item");
+    app.graph_cursor = src_folder;
+    app.handle_input(vec![key(KeyCode::Char('h'))]);
+    assert!(
+        app.commit_folds.contains("src"),
+        "h folds the folder under the cursor"
+    );
+    let folded = screen(&mut app, 140, 30);
+    let ftail = folded[commit_idx + 1..].join("\n");
+    assert!(
+        ftail.contains("▸ src/"),
+        "folded folder shows a closed marker"
+    );
+    assert!(
+        !ftail.contains("graph.rs"),
+        "folded folder hides its files: {ftail}"
+    );
+
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert!(
+        !app.commit_folds.contains("src"),
+        "enter on a folded folder reopens it"
+    );
+}
+
+#[test]
 fn graph_expands_commit_files_and_opens_per_file_diff() {
     let dir = temp_repo();
     std::fs::write(dir.join("a.txt"), "first\n").unwrap();
@@ -1200,7 +1316,10 @@ fn graph_expands_commit_files_and_opens_per_file_diff() {
         "h jumps back to the commit row"
     );
     app.handle_input(vec![key(KeyCode::Enter)]);
-    assert_eq!(app.selected_commit_file, None, "enter reopens whole-commit diff");
+    assert_eq!(
+        app.selected_commit_file, None,
+        "enter reopens whole-commit diff"
+    );
     assert_eq!(app.active_tab, Tab::Graph, "still on graph after reopening");
     app.handle_input(vec![key(KeyCode::Enter)]);
     assert!(app.selected_commit.is_none(), "second enter collapses");
@@ -1219,7 +1338,10 @@ fn graph_expands_uncommitted_node_and_opens_file_diff() {
     app.focus = Pane::RightTab;
 
     let top = &app.graph.rows[0];
-    assert!(top.is_uncommitted, "uncommitted node is the first graph row");
+    assert!(
+        top.is_uncommitted,
+        "uncommitted node is the first graph row"
+    );
 
     app.handle_input(vec![key(KeyCode::Enter)]);
     assert!(
@@ -1247,4 +1369,3 @@ fn graph_expands_uncommitted_node_and_opens_file_diff() {
     let row = find_line(&lines, "second").expect("per-file diff rendered");
     assert!(row.contains("first"), "old content on the left: {row}");
 }
-
