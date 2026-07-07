@@ -6,7 +6,7 @@ use ratatui::widgets::Paragraph;
 use twit_core::keymap::{Action, Context};
 
 use crate::app::{Pane, Tab, TuiApp};
-use crate::ui::FOCUS_FG;
+use crate::ui::{FOCUS_FG, wrap_plain};
 
 fn tui_supported(action: Action) -> bool {
     !matches!(
@@ -19,11 +19,14 @@ fn tui_supported(action: Action) -> bool {
 }
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
+    let width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::styled(
+    push_wrapped(
+        &mut lines,
+        width,
         "Keybindings — ? or Esc to close, j/k to scroll",
         Style::default().fg(FOCUS_FG).add_modifier(Modifier::BOLD),
-    ));
+    );
     lines.push(Line::raw(""));
 
     let focused = match (app.focus, app.active_tab) {
@@ -35,10 +38,10 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
         (Pane::RightTab, Tab::Editor) => None,
     };
     if let Some(ctx) = focused {
-        section(&mut lines, app, ctx);
+        section(&mut lines, app, ctx, width);
     }
-    section(&mut lines, app, Context::Global);
-    extras(&mut lines);
+    section(&mut lines, app, Context::Global, width);
+    extras(&mut lines, width);
 
     let h = area.height as usize;
     app.help_scroll = app.help_scroll.min(lines.len().saturating_sub(h));
@@ -46,25 +49,53 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     frame.render_widget(Paragraph::new(visible), area);
 }
 
-fn section(lines: &mut Vec<Line<'static>>, app: &TuiApp, ctx: Context) {
-    lines.push(Line::styled(
-        ctx.title().to_string(),
+fn push_wrapped(lines: &mut Vec<Line<'static>>, width: usize, text: &str, style: Style) {
+    for chunk in wrap_plain(text, width) {
+        lines.push(Line::styled(chunk, style));
+    }
+}
+
+fn push_kv(lines: &mut Vec<Line<'static>>, width: usize, keys: &str, desc: &str) {
+    let prefix = format!("  {keys:<18} ");
+    let indent = prefix.chars().count();
+    if width.saturating_sub(indent) < 6 {
+        push_wrapped(lines, width, &format!("{prefix}{desc}"), Style::default());
+        return;
+    }
+    let pad = " ".repeat(indent);
+    for (i, chunk) in wrap_plain(desc, width - indent).into_iter().enumerate() {
+        let row = if i == 0 {
+            format!("{prefix}{chunk}")
+        } else {
+            format!("{pad}{chunk}")
+        };
+        lines.push(Line::raw(row));
+    }
+}
+
+fn section(lines: &mut Vec<Line<'static>>, app: &TuiApp, ctx: Context, width: usize) {
+    push_wrapped(
+        lines,
+        width,
+        ctx.title(),
         Style::default().add_modifier(Modifier::BOLD),
-    ));
+    );
     for e in app.keymap.help_for(ctx) {
         if !tui_supported(e.action) {
             continue;
         }
-        lines.push(Line::raw(format!("  {:<18} {}", e.keys, e.desc)));
+        push_kv(lines, width, &e.keys, &e.desc);
     }
     lines.push(Line::raw(""));
 }
 
-fn extras(lines: &mut Vec<Line<'static>>) {
-    lines.push(Line::styled(
-        "Other keys".to_string(),
+fn extras(lines: &mut Vec<Line<'static>>, width: usize) {
+    push_wrapped(
+        lines,
+        width,
+        "Other keys",
         Style::default().add_modifier(Modifier::BOLD),
-    ));
+    );
     for (keys, desc) in [
         ("Q / Ctrl+C", "Quit this pane"),
         ("?", "Toggle this help"),
@@ -76,10 +107,12 @@ fn extras(lines: &mut Vec<Line<'static>>) {
         ("/ r Enter", "Search: query / replace all / open in editor"),
         ("C / A", "Continue / abort the in-progress rebase etc."),
     ] {
-        lines.push(Line::raw(format!("  {keys:<18} {desc}")));
+        push_kv(lines, width, keys, desc);
     }
-    lines.push(Line::styled(
-        "Keys are configurable in ~/.config/twig ([keys.*]).".to_string(),
+    push_wrapped(
+        lines,
+        width,
+        "Keys are configurable in ~/.config/twig ([keys.*]).",
         Style::default().fg(Color::DarkGray),
-    ));
+    );
 }
