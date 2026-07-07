@@ -7,10 +7,18 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use twit_term::alacritty_terminal::term::cell::Flags;
 use twit_term::alacritty_terminal::vte::ansi::CursorShape;
-use twit_term::{TermBackend, color_rgb};
+use twit_term::{ColorSlot, TermBackend, color_slot};
 
 pub struct EditorTerm {
     pub be: TermBackend,
+}
+
+fn to_color(slot: ColorSlot) -> Option<Color> {
+    match slot {
+        ColorSlot::Default => None,
+        ColorSlot::Indexed(i) => Some(Color::Indexed(i)),
+        ColorSlot::Rgb(r, g, b) => Some(Color::Rgb(r, g, b)),
+    }
 }
 
 impl EditorTerm {
@@ -62,11 +70,11 @@ impl EditorTerm {
             let c = if cell.c == '\0' { ' ' } else { cell.c };
             slot.set_char(c);
             let mut style = Style::default();
-            if let Some((r, g, b)) = color_rgb(cell.fg) {
-                style = style.fg(Color::Rgb(r, g, b));
+            if let Some(color) = to_color(color_slot(cell.fg)) {
+                style = style.fg(color);
             }
-            if let Some((r, g, b)) = color_rgb(cell.bg) {
-                style = style.bg(Color::Rgb(r, g, b));
+            if let Some(color) = to_color(color_slot(cell.bg)) {
+                style = style.bg(color);
             }
             if cell.flags.contains(Flags::INVERSE) {
                 style = style.add_modifier(Modifier::REVERSED);
@@ -77,8 +85,11 @@ impl EditorTerm {
             if cell.flags.contains(Flags::ITALIC) {
                 style = style.add_modifier(Modifier::ITALIC);
             }
-            if cell.flags.contains(Flags::UNDERLINE) {
+            if cell.flags.intersects(Flags::ALL_UNDERLINES) {
                 style = style.add_modifier(Modifier::UNDERLINED);
+                if let Some(color) = cell.underline_color().and_then(|c| to_color(color_slot(c))) {
+                    style = style.underline_color(color);
+                }
             }
             slot.set_style(style);
         }
@@ -206,5 +217,55 @@ mod tests {
         let mut rel = press(KeyCode::Char('a'), KeyModifiers::NONE);
         rel.kind = KeyEventKind::Release;
         assert_eq!(key_to_bytes(&rel), None);
+    }
+
+    #[test]
+    fn nvim_colored_underline_reaches_buffer() {
+        use std::time::{Duration, Instant};
+        if std::process::Command::new("nvim")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("nvim missing; skipping");
+            return;
+        }
+        let be = TermBackend::spawn_program(
+            "nvim",
+            &["--clean", "-n", "-u", "NONE"],
+            Path::new("/"),
+            Arc::new(|| {}),
+        )
+        .unwrap();
+        let mut term = EditorTerm { be };
+        let settle = |term: &mut EditorTerm, ms: u64| {
+            let end = Instant::now() + Duration::from_millis(ms);
+            while Instant::now() < end {
+                term.be.pump();
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        settle(&mut term, 800);
+        for cmd in [
+            &b"\x1b"[..],
+            b"iZZZ\x1b",
+            b":set termguicolors\r",
+            b":hi Foo gui=undercurl guisp=#ff0000\r",
+            b":call matchadd('Foo','ZZZ')\r",
+            b":redraw!\r",
+        ] {
+            term.be.feed(cmd);
+            settle(&mut term, 300);
+        }
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        term.draw(&mut buf, area, true);
+        let hit = (0..80).any(|x| {
+            let cell = &buf[(x, 0)];
+            cell.symbol() == "Z"
+                && cell.modifier.contains(Modifier::UNDERLINED)
+                && cell.underline_color == Color::Rgb(255, 0, 0)
+        });
+        assert!(hit, "no Z cell carried a red underline color");
     }
 }

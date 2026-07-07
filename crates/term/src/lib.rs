@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 pub use alacritty_terminal;
@@ -96,7 +96,8 @@ impl TermBackend {
             .map_err(|e| format!("openpty failed: {e}"))?;
 
         cmd.cwd(cwd);
-        cmd.env("TERM", "xterm-256color");
+        cmd.env("TERM", preferred_term());
+        cmd.env("COLORTERM", "truecolor");
 
         let child = pair
             .slave
@@ -196,32 +197,89 @@ impl TermBackend {
     }
 }
 
-pub fn color_rgb(c: Color) -> Option<(u8, u8, u8)> {
-    match c {
-        Color::Spec(rgb) => Some((rgb.r, rgb.g, rgb.b)),
-        Color::Indexed(i) => Some(indexed(i)),
-        Color::Named(n) => {
-            let i = match n {
-                NamedColor::Black => 0,
-                NamedColor::Red => 1,
-                NamedColor::Green => 2,
-                NamedColor::Yellow => 3,
-                NamedColor::Blue => 4,
-                NamedColor::Magenta => 5,
-                NamedColor::Cyan => 6,
-                NamedColor::White => 7,
-                NamedColor::BrightBlack => 8,
-                NamedColor::BrightRed => 9,
-                NamedColor::BrightGreen => 10,
-                NamedColor::BrightYellow => 11,
-                NamedColor::BrightBlue => 12,
-                NamedColor::BrightMagenta => 13,
-                NamedColor::BrightCyan => 14,
-                NamedColor::BrightWhite => 15,
-                _ => return None,
-            };
-            Some(indexed(i))
+fn preferred_term() -> &'static str {
+    static TERM: OnceLock<&'static str> = OnceLock::new();
+    TERM.get_or_init(|| {
+        if terminfo_has("alacritty") {
+            "alacritty"
+        } else {
+            "xterm-256color"
         }
+    })
+}
+
+fn terminfo_has(name: &str) -> bool {
+    let first = name.as_bytes()[0];
+    let sub_letter = (first as char).to_string();
+    let sub_hex = format!("{first:x}");
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(d) = std::env::var("TERMINFO") {
+        dirs.push(PathBuf::from(d));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        dirs.push(PathBuf::from(home).join(".terminfo"));
+    }
+    if let Ok(list) = std::env::var("TERMINFO_DIRS") {
+        for d in list.split(':').filter(|s| !s.is_empty()) {
+            dirs.push(PathBuf::from(d));
+        }
+    }
+    for d in [
+        "/usr/share/terminfo",
+        "/etc/terminfo",
+        "/lib/terminfo",
+        "/usr/lib/terminfo",
+    ] {
+        dirs.push(PathBuf::from(d));
+    }
+    dirs.iter()
+        .any(|d| d.join(&sub_letter).join(name).exists() || d.join(&sub_hex).join(name).exists())
+}
+
+pub enum ColorSlot {
+    Default,
+    Indexed(u8),
+    Rgb(u8, u8, u8),
+}
+
+pub fn color_slot(c: Color) -> ColorSlot {
+    match c {
+        Color::Spec(rgb) => ColorSlot::Rgb(rgb.r, rgb.g, rgb.b),
+        Color::Indexed(i) => ColorSlot::Indexed(i),
+        Color::Named(n) => match named_index(n) {
+            Some(i) => ColorSlot::Indexed(i),
+            None => ColorSlot::Default,
+        },
+    }
+}
+
+fn named_index(n: NamedColor) -> Option<u8> {
+    Some(match n {
+        NamedColor::Black => 0,
+        NamedColor::Red => 1,
+        NamedColor::Green => 2,
+        NamedColor::Yellow => 3,
+        NamedColor::Blue => 4,
+        NamedColor::Magenta => 5,
+        NamedColor::Cyan => 6,
+        NamedColor::White => 7,
+        NamedColor::BrightBlack => 8,
+        NamedColor::BrightRed => 9,
+        NamedColor::BrightGreen => 10,
+        NamedColor::BrightYellow => 11,
+        NamedColor::BrightBlue => 12,
+        NamedColor::BrightMagenta => 13,
+        NamedColor::BrightCyan => 14,
+        NamedColor::BrightWhite => 15,
+        _ => return None,
+    })
+}
+
+pub fn color_rgb(c: Color) -> Option<(u8, u8, u8)> {
+    match color_slot(c) {
+        ColorSlot::Default => None,
+        ColorSlot::Indexed(i) => Some(indexed(i)),
+        ColorSlot::Rgb(r, g, b) => Some((r, g, b)),
     }
 }
 
@@ -294,7 +352,31 @@ mod tests {
             if text.contains("hello-term") && text.contains("日本語") {
                 break;
             }
-            assert!(Instant::now() < deadline, "grid never showed output: {text}");
+            assert!(
+                Instant::now() < deadline,
+                "grid never showed output: {text}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn colorterm_truecolor_reaches_child() {
+        let mut be = TermBackend::spawn_program(
+            "sh",
+            &["-c", "printf 'CT=[%s]' \"$COLORTERM\"; sleep 1"],
+            Path::new("/"),
+            Arc::new(|| {}),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            be.pump();
+            let text = grid_text(&mut be);
+            if text.contains("CT=[truecolor]") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "COLORTERM not seen: {text}");
             thread::sleep(Duration::from_millis(20));
         }
     }
@@ -317,7 +399,10 @@ mod tests {
 
     #[test]
     fn color_rgb_maps_named_indexed_and_default() {
-        assert_eq!(color_rgb(Color::Named(NamedColor::Red)), Some((0xcd, 0x31, 0x31)));
+        assert_eq!(
+            color_rgb(Color::Named(NamedColor::Red)),
+            Some((0xcd, 0x31, 0x31))
+        );
         assert_eq!(color_rgb(Color::Indexed(15)), Some((0xff, 0xff, 0xff)));
         assert_eq!(color_rgb(Color::Named(NamedColor::Foreground)), None);
         assert_eq!(color_rgb(Color::Named(NamedColor::Background)), None);
