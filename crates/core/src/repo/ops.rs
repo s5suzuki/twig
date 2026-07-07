@@ -77,12 +77,42 @@ pub fn discard(repo_path: &Path, paths: &[String]) -> Result<(), git2::Error> {
     }
     let repo = Repository::open(repo_path)?;
 
+    let mut file_paths = Vec::new();
+    for p in paths {
+        match find_submodule_by_path(&repo, p) {
+            Some(sm) => discard_submodule(&sm)?,
+            None => file_paths.push(p),
+        }
+    }
+
+    if file_paths.is_empty() {
+        return Ok(());
+    }
     let mut cb = git2::build::CheckoutBuilder::new();
     cb.force().remove_untracked(true);
-    for p in paths {
+    for p in &file_paths {
         cb.path(p);
     }
     repo.checkout_index(None, Some(&mut cb))
+}
+
+fn find_submodule_by_path<'a>(repo: &'a Repository, path: &str) -> Option<Submodule<'a>> {
+    let target = path.trim_end_matches('/');
+    repo.submodules().ok()?.into_iter().find(|sm| {
+        sm.path().to_str().is_some_and(|p| p.trim_end_matches('/') == target)
+    })
+}
+
+fn discard_submodule(sm: &Submodule) -> Result<(), git2::Error> {
+    let target = sm.index_id().or_else(|| sm.head_id()).ok_or_else(|| {
+        git2::Error::from_str("submodule has no recorded commit to restore")
+    })?;
+    let sub_repo = sm.open()?;
+    let obj = sub_repo.find_object(target, None)?;
+    let mut cb = git2::build::CheckoutBuilder::new();
+    cb.force().remove_untracked(true);
+    sub_repo.checkout_tree(&obj, Some(&mut cb))?;
+    sub_repo.set_head_detached(target)
 }
 
 pub fn checkout_branch(repo_path: &Path, branch: &str) -> Result<(), git2::Error> {
