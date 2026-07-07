@@ -98,11 +98,15 @@ impl FindBar {
 pub struct SearchState {
     pub query: String,
     pub replace: String,
+    pub include: String,
+    pub exclude: String,
     pub regex: bool,
     pub case_sensitive: bool,
     pub error: Option<String>,
     pub results: Vec<search::FileHit>,
     pub selected: HashSet<(String, u32)>,
+    pub folded_dirs: HashSet<String>,
+    pub folded_files: HashSet<String>,
     pub searched: bool,
     pub focus_request: bool,
 }
@@ -323,7 +327,7 @@ pub struct App {
     pub term: Option<crate::term::Term>,
     pub nvim_socket: PathBuf,
 
-    pub pending_open: Option<PathBuf>,
+    pub pending_open: Option<(PathBuf, Option<u32>)>,
 
     pub shell: Option<crate::term::Term>,
     pub shell_open: bool,
@@ -787,7 +791,14 @@ impl App {
                 return;
             }
         };
-        let hits = search::search_repo(&self.selected, &matcher);
+        let filter = search::SearchFilter::parse(&self.search.include, &self.search.exclude);
+        let hits = match search::search_repo_filtered(&self.selected, &matcher, &filter) {
+            Ok(h) => h,
+            Err(e) => {
+                self.search.error = Some(e);
+                return;
+            }
+        };
         for f in &hits {
             for l in &f.lines {
                 self.search.selected.insert((f.path.clone(), l.line_no));
@@ -865,6 +876,32 @@ impl App {
             .map(|l| (f.path.clone(), l.line_no))
             .collect();
         for k in keys {
+            if all {
+                self.search.selected.remove(&k);
+            } else {
+                self.search.selected.insert(k);
+            }
+        }
+    }
+
+    fn search_dir_keys(&self, prefix: &str) -> Vec<(String, u32)> {
+        let pfx = format!("{prefix}/");
+        self.search
+            .results
+            .iter()
+            .filter(|f| f.path.starts_with(&pfx))
+            .flat_map(|f| f.lines.iter().map(move |l| (f.path.clone(), l.line_no)))
+            .collect()
+    }
+
+    pub fn search_dir_all_selected(&self, prefix: &str) -> bool {
+        let keys = self.search_dir_keys(prefix);
+        !keys.is_empty() && keys.iter().all(|k| self.search.selected.contains(k))
+    }
+
+    pub fn search_toggle_dir(&mut self, prefix: &str) {
+        let all = self.search_dir_all_selected(prefix);
+        for k in self.search_dir_keys(prefix) {
             if all {
                 self.search.selected.remove(&k);
             } else {
@@ -1409,29 +1446,36 @@ impl App {
 
     pub fn open_in_editor(&mut self, file: &str) {
         let abs = self.selected.join(file);
-        self.open_abs_in_editor(abs);
+        self.open_abs_in_editor(abs, None);
     }
 
-    pub fn open_abs_in_editor(&mut self, abs: PathBuf) {
+    pub fn open_in_editor_at(&mut self, file: &str, line: u32) {
+        let abs = self.selected.join(file);
+        self.open_abs_in_editor(abs, Some(line));
+    }
+
+    pub fn open_abs_in_editor(&mut self, abs: PathBuf, line: Option<u32>) {
         self.active_tab = Tab::Editor;
         self.focus = Pane::RightTab;
         if self.term.is_some() && self.nvim_socket.exists() {
-            if let Err(e) = twit_core::editor::open_abs_in_server(&abs, &self.nvim_socket) {
+            if let Err(e) =
+                twit_core::editor::open_abs_in_server_at(&abs, &self.nvim_socket, line)
+            {
                 self.error = Some(e);
             }
         } else {
-            self.pending_open = Some(abs);
+            self.pending_open = Some((abs, line));
         }
     }
 
     pub fn flush_pending_open(&mut self) -> bool {
-        let Some(abs) = self.pending_open.clone() else {
+        let Some((abs, line)) = self.pending_open.clone() else {
             return false;
         };
         if self.term.is_none() || !self.nvim_socket.exists() {
             return true;
         }
-        if let Err(e) = twit_core::editor::open_abs_in_server(&abs, &self.nvim_socket) {
+        if let Err(e) = twit_core::editor::open_abs_in_server_at(&abs, &self.nvim_socket, line) {
             self.error = Some(e);
         }
         self.pending_open = None;

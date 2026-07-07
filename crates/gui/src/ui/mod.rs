@@ -476,10 +476,10 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
                 Tab::Search => {
-                    if let Some(search_view::SearchAction::OpenEditor(p)) =
+                    if let Some(search_view::SearchAction::OpenEditor { path, line }) =
                         search_view::draw(app, ui)
                     {
-                        app.open_in_editor(&p);
+                        app.open_in_editor_at(&path, line);
                     }
                 }
             }

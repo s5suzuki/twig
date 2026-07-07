@@ -81,7 +81,7 @@ pub fn draw_tree(app: &mut App, ui: &mut egui::Ui) {
         app.select_repo(path);
     }
     if let Some(path) = file_to_open {
-        app.open_abs_in_editor(path);
+        app.open_abs_in_editor(path, None);
     }
     match sub_action {
         Some(SubAction::Init(parent, name)) => {

@@ -131,7 +131,7 @@ fn embedded_nvim_tab_starts_edits_and_keeps_q_local() {
     let file = dir.join("hello.txt");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        assert!(app.open_in_embedded(&file), "embedded editor accepts the file");
+        assert!(app.open_in_embedded(&file, None), "embedded editor accepts the file");
         if let Some(t) = app.term.as_mut() {
             t.pump();
         }
@@ -203,7 +203,7 @@ fn open_in_embedded_spawns_nvim_and_opens_the_file() {
 
     let file = dir.join("from-e.txt");
     assert!(
-        app.open_in_embedded(&file),
+        app.open_in_embedded(&file, None),
         "e path spawns the editor even when it is not running yet"
     );
     assert_eq!(app.active_tab, Tab::Editor, "switches to the editor tab");

@@ -140,7 +140,7 @@ fn main() -> eframe::Result<()> {
             let case_sensitive = !flags.contains(&"nocase");
             match search::Matcher::new(pattern, regex, case_sensitive) {
                 Ok(m) => {
-                    let hits = search::search_repo(&path, &m);
+                    let hits = search::search_repo(&path, &m, &search::SearchFilter::default());
                     let total: usize = hits.iter().map(|f| f.lines.len()).sum();
                     println!("{} file(s), {total} line(s)", hits.len());
                     for f in &hits {

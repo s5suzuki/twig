@@ -378,8 +378,8 @@ fn run(
             run_suspended(terminal, app, &argv, kb_enhanced)?;
             dirty = true;
         }
-        if let Some(file) = app.pending_editor.take() {
-            open_editor(terminal, app, &file, kb_enhanced)?;
+        if let Some((file, line)) = app.pending_editor.take() {
+            open_editor(terminal, app, &file, line, kb_enhanced)?;
             dirty = true;
         }
         if app.quit {
@@ -428,6 +428,7 @@ fn open_editor(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut TuiApp,
     file: &std::path::Path,
+    line: Option<u32>,
     kb_enhanced: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use ratatui::crossterm::execute;
@@ -435,12 +436,12 @@ fn open_editor(
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
     };
 
-    if app.open_in_embedded(file) {
+    if app.open_in_embedded(file, line) {
         return Ok(());
     }
 
     if let Some(sess) = app.session.as_mut()
-        && sess.request_editor(file)
+        && sess.request_editor(file, line)
     {
         if let Some(target) = sess.editor_target_pane() {
             std::thread::spawn(move || zellij::focus_pane(&target));
@@ -449,7 +450,9 @@ fn open_editor(
     }
 
     if let Some(server) = nvim_server() {
-        if let Err(e) = twit_core::editor::open_abs_in_server(file, std::path::Path::new(&server)) {
+        if let Err(e) =
+            twit_core::editor::open_abs_in_server_at(file, std::path::Path::new(&server), line)
+        {
             app.error = Some(e);
         }
         return Ok(());
@@ -460,7 +463,11 @@ fn open_editor(
     if kb_enhanced {
         pop_kb_enhancement();
     }
-    let status = std::process::Command::new("nvim").arg(file).status();
+    let mut cmd = std::process::Command::new("nvim");
+    if let Some(line) = line {
+        cmd.arg(format!("+{line}"));
+    }
+    let status = cmd.arg(file).status();
     if kb_enhanced {
         push_kb_enhancement();
     }

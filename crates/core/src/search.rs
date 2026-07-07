@@ -1,9 +1,48 @@
 use std::path::Path;
 
 use ignore::WalkBuilder;
+use ignore::overrides::{Override, OverrideBuilder};
 use regex::{Regex, RegexBuilder};
 
 pub const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
+
+#[derive(Default, Clone)]
+pub struct SearchFilter {
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+impl SearchFilter {
+    pub fn parse(include: &str, exclude: &str) -> SearchFilter {
+        let split = |s: &str| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        SearchFilter {
+            include: split(include),
+            exclude: split(exclude),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.include.is_empty() && self.exclude.is_empty()
+    }
+
+    fn build(&self, root: &Path) -> Result<Override, String> {
+        let mut b = OverrideBuilder::new(root);
+        for g in &self.include {
+            b.add(g).map_err(|e| format!("include `{g}`: {e}"))?;
+        }
+        for g in &self.exclude {
+            b.add(&format!("!{g}"))
+                .map_err(|e| format!("exclude `{g}`: {e}"))?;
+        }
+        b.build().map_err(|e| e.to_string())
+    }
+}
 
 pub struct Matcher {
     re: Regex,
@@ -168,9 +207,21 @@ fn readable_text(path: &Path) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-pub fn search_repo(root: &Path, matcher: &Matcher) -> Vec<FileHit> {
+pub fn search_repo(root: &Path, matcher: &Matcher, filter: &SearchFilter) -> Vec<FileHit> {
+    search_repo_filtered(root, matcher, filter).unwrap_or_default()
+}
+
+pub fn search_repo_filtered(
+    root: &Path,
+    matcher: &Matcher,
+    filter: &SearchFilter,
+) -> Result<Vec<FileHit>, String> {
+    let mut walk = WalkBuilder::new(root);
+    if !filter.is_empty() {
+        walk.overrides(filter.build(root)?);
+    }
     let mut out = Vec::new();
-    for entry in WalkBuilder::new(root).build().flatten() {
+    for entry in walk.build().flatten() {
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
@@ -191,7 +242,7 @@ pub fn search_repo(root: &Path, matcher: &Matcher) -> Vec<FileHit> {
         }
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -245,6 +296,23 @@ mod tests {
     fn empty_pattern_errors() {
         assert!(Matcher::new("", false, true).is_err());
         assert!(Matcher::new("(", true, true).is_err());
+    }
+
+    #[test]
+    fn filter_parse_splits_and_trims() {
+        let f = SearchFilter::parse(" a/**, *.rs ,, b ", "**/target/**");
+        assert_eq!(f.include, vec!["a/**", "*.rs", "b"]);
+        assert_eq!(f.exclude, vec!["**/target/**"]);
+        assert!(!f.is_empty());
+        assert!(SearchFilter::parse("  ", " , ").is_empty());
+    }
+
+    #[test]
+    fn filter_builds_override() {
+        let f = SearchFilter::parse("*.rs", "target/**");
+        let ov = f.build(Path::new(".")).unwrap();
+        assert!(ov.matched("main.rs", false).is_whitelist());
+        assert!(ov.matched("target/x", false).is_ignore());
     }
 
     #[test]

@@ -929,6 +929,55 @@ fn search_tab_finds_and_replaces_across_repo() {
 }
 
 #[test]
+fn search_tab_tree_folds_and_include_filter() {
+    let dir = temp_repo();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("docs")).unwrap();
+    std::fs::write(dir.join("src/a.rs"), "needle in rust\n").unwrap();
+    std::fs::write(dir.join("docs/b.txt"), "needle in text\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    app.active_tab = Tab::Search;
+
+    app.handle_input(vec![key(KeyCode::Char('/'))]);
+    type_text(&mut app, "needle");
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert_eq!(app.search.hits.len(), 2, "both files hit");
+
+    let lines = screen(&mut app, 140, 30);
+    assert!(find_line(&lines, "docs/").is_some(), "folder row rendered");
+    assert!(find_line(&lines, "src/").is_some(), "folder row rendered");
+    assert!(find_line(&lines, "needle in text").is_some());
+
+    // cursor starts on the first row (docs/ folder); collapse it with h.
+    app.handle_input(vec![key(KeyCode::Char('h'))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "needle in text").is_none(),
+        "collapsed folder hides its match lines"
+    );
+    assert!(find_line(&lines, "docs/").is_some(), "folder header stays");
+
+    // include filter to *.rs only drops the txt hit.
+    app.handle_input(vec![key(KeyCode::Char('i'))]);
+    type_text(&mut app, "**/*.rs");
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    assert_eq!(app.search.hits.len(), 1, "include glob keeps only the rust file");
+    assert_eq!(app.search.hits[0].path, "src/a.rs");
+
+    // rows: [Dir src, File a.rs, Line]; step down to the match line and open it.
+    app.handle_input(vec![key(KeyCode::Char('j'))]);
+    app.handle_input(vec![key(KeyCode::Char('j'))]);
+    app.handle_input(vec![key(KeyCode::Enter)]);
+    let (path, line) = app.pending_editor.clone().expect("Enter queues an editor open");
+    assert!(path.ends_with("src/a.rs"));
+    assert_eq!(line, Some(1), "jump carries the match line number");
+}
+
+#[test]
 fn diff_find_jumps_and_highlights() {
     let dir = two_hunk_repo();
     let mut app = TuiApp::new(&dir).unwrap();

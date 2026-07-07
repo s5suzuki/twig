@@ -23,6 +23,8 @@ pub struct SharedState {
     #[serde(default)]
     pub editor_file: Option<String>,
     #[serde(default)]
+    pub editor_line: Option<u32>,
+    #[serde(default)]
     pub editor_seq: u64,
 }
 
@@ -40,6 +42,7 @@ impl SharedState {
             zellij_panes: BTreeMap::new(),
             extra_panes: Vec::new(),
             editor_file: None,
+            editor_line: None,
             editor_seq: 0,
         }
     }
@@ -164,7 +167,7 @@ impl Session {
         Ok(sess)
     }
 
-    pub fn request_editor(&mut self, file: &Path) -> bool {
+    pub fn request_editor(&mut self, file: &Path, line: Option<u32>) -> bool {
         let has_main = self
             .read()
             .is_some_and(|s| s.panes.contains_key("main"));
@@ -174,6 +177,7 @@ impl Session {
         let file = file.to_string_lossy().into_owned();
         self.publish(|st| {
             st.editor_file = Some(file);
+            st.editor_line = line;
             st.editor_seq += 1;
         });
         true

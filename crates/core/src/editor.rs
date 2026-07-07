@@ -20,19 +20,37 @@ pub fn open_in_server(repo_path: &Path, file: &str, server: &Path) -> Result<(),
 }
 
 pub fn open_abs_in_server(abs: &Path, server: &Path) -> Result<(), String> {
+    open_abs_in_server_at(abs, server, None)
+}
+
+pub fn open_abs_in_server_at(abs: &Path, server: &Path, line: Option<u32>) -> Result<(), String> {
+    let server = server.to_string_lossy();
+    let mut open = Command::new("nvim");
+    open.args(["--server", &server, "--remote", &abs.to_string_lossy()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let Some(line) = line else {
+        return open
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Failed to send nvim --remote: {e}"));
+    };
+    open.status()
+        .map_err(|e| format!("Failed to send nvim --remote: {e}"))?;
     Command::new("nvim")
         .args([
             "--server",
-            &server.to_string_lossy(),
-            "--remote",
-            &abs.to_string_lossy(),
+            &server,
+            "--remote-send",
+            &format!("<Cmd>normal! {line}Gzz<CR>"),
         ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map(|_| ())
-        .map_err(|e| format!("Failed to send nvim --remote: {e}"))
+        .map_err(|e| format!("Failed to send nvim --remote-send: {e}"))
 }
 
 fn nvim_server() -> Option<String> {

@@ -100,7 +100,7 @@ fn editor_request_from_changes_pane_opens_editor_tab_in_main_pane() {
     let file = dir.join("x.txt");
     let sess = changes.session.as_mut().unwrap();
     assert!(
-        sess.request_editor(&file),
+        sess.request_editor(&file, None),
         "request accepted when a main pane exists"
     );
 

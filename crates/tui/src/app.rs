@@ -220,6 +220,8 @@ pub enum Prompt {
     DiffFind,
     EditGraphLimit,
     SearchQuery,
+    SearchInclude,
+    SearchExclude,
     SearchReplace,
     ConfirmSearchReplace {
         replacement: String,
@@ -243,6 +245,8 @@ impl Prompt {
                 | Prompt::DiffFind
                 | Prompt::EditGraphLimit
                 | Prompt::SearchQuery
+                | Prompt::SearchInclude
+                | Prompt::SearchExclude
                 | Prompt::SearchReplace
         )
     }
@@ -340,6 +344,8 @@ impl Prompt {
             Prompt::DiffFind => "Find in diff:".to_string(),
             Prompt::EditGraphLimit => "Graph commit limit:".to_string(),
             Prompt::SearchQuery => "Search repository:".to_string(),
+            Prompt::SearchInclude => "Files to include (glob):".to_string(),
+            Prompt::SearchExclude => "Files to exclude (glob):".to_string(),
             Prompt::SearchReplace => "Replace matches with:".to_string(),
             Prompt::ConfirmSearchReplace { replacement } => {
                 format!("Replace all matches with \"{replacement}\"? (y/n)")
@@ -445,25 +451,63 @@ impl RemoteKind {
 #[derive(Default)]
 pub struct SearchState {
     pub query: String,
+    pub include: String,
+    pub exclude: String,
     pub hits: Vec<twit_core::search::FileHit>,
     pub cursor: usize,
     pub scroll: usize,
     pub view_rows: usize,
+    pub folded_dirs: HashSet<String>,
+    pub folded_files: HashSet<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SearchRow {
-    File(usize),
+    Dir {
+        name: String,
+        path: String,
+        open: bool,
+        depth: usize,
+    },
+    File {
+        hit: usize,
+        depth: usize,
+    },
     Line(usize, usize),
 }
 
 impl SearchState {
     pub fn rows(&self) -> Vec<SearchRow> {
+        let files: Vec<CommitFile> = self
+            .hits
+            .iter()
+            .map(|f| CommitFile {
+                path: f.path.clone(),
+                kind: repo::StatusKind::Modified,
+            })
+            .collect();
         let mut out = Vec::new();
-        for (i, f) in self.hits.iter().enumerate() {
-            out.push(SearchRow::File(i));
-            for j in 0..f.lines.len() {
-                out.push(SearchRow::Line(i, j));
+        for row in repo::commit_file_rows(&files, true, &self.folded_dirs) {
+            match row.kind {
+                repo::CommitRowKind::Folder { name, path, open } => {
+                    out.push(SearchRow::Dir {
+                        name,
+                        path,
+                        open,
+                        depth: row.depth,
+                    });
+                }
+                repo::CommitRowKind::File(i) => {
+                    out.push(SearchRow::File {
+                        hit: i,
+                        depth: row.depth,
+                    });
+                    if !self.folded_files.contains(&self.hits[i].path) {
+                        for j in 0..self.hits[i].lines.len() {
+                            out.push(SearchRow::Line(i, j));
+                        }
+                    }
+                }
             }
         }
         out
@@ -576,7 +620,7 @@ pub struct TuiApp {
     pub graph_view_rows: usize,
 
     pub prompt: Option<(Prompt, String)>,
-    pub pending_editor: Option<PathBuf>,
+    pub pending_editor: Option<(PathBuf, Option<u32>)>,
     pub pending_shell: Option<Vec<String>>,
     pub stashes: Vec<repo::StashEntry>,
     pub seq: Option<(repo::SeqState, Vec<String>)>,
@@ -593,7 +637,7 @@ pub struct TuiApp {
     pub pending_focus_jump: bool,
     pub term: Option<crate::term::EditorTerm>,
     pub nvim_socket: PathBuf,
-    pub pending_open: Option<(PathBuf, std::time::Instant)>,
+    pub pending_open: Option<(PathBuf, Option<u32>, std::time::Instant)>,
     editor_seq_seen: Option<u64>,
 
     nav_back: Vec<NavPoint>,
@@ -1331,7 +1375,7 @@ impl TuiApp {
                 Some(prev) if st.editor_seq > prev => {
                     self.editor_seq_seen = Some(st.editor_seq);
                     if let Some(file) = st.editor_file.clone() {
-                        self.open_in_embedded(Path::new(&file));
+                        self.open_in_embedded(Path::new(&file), st.editor_line);
                     }
                 }
                 _ => {}
@@ -1611,6 +1655,20 @@ impl TuiApp {
                 _ => self.error = Some(format!("invalid commit limit: {}", input.trim())),
             },
             Prompt::SearchQuery => self.run_search(input.trim()),
+            Prompt::SearchInclude => {
+                self.search.include = input.trim().to_string();
+                let query = self.search.query.clone();
+                if !query.is_empty() {
+                    self.run_search(&query);
+                }
+            }
+            Prompt::SearchExclude => {
+                self.search.exclude = input.trim().to_string();
+                let query = self.search.query.clone();
+                if !query.is_empty() {
+                    self.run_search(&query);
+                }
+            }
             Prompt::SearchReplace => {
                 self.prompt = Some((
                     Prompt::ConfirmSearchReplace { replacement: input },
@@ -2166,7 +2224,7 @@ impl TuiApp {
                 },
                 Action::ChangesEdit => {
                     if let Some(ChangesItem::File { path, .. }) = item {
-                        self.pending_editor = Some(self.selected.join(path));
+                        self.pending_editor = Some((self.selected.join(path), None));
                     }
                 }
                 Action::ChangesDiscard => self.changes_discard(item),
@@ -2374,7 +2432,7 @@ impl TuiApp {
                 }
                 Action::DiffEditor => {
                     if let Some((path, _)) = &self.selected_file {
-                        self.pending_editor = Some(self.selected.join(path));
+                        self.pending_editor = Some((self.selected.join(path), None));
                     }
                 }
                 Action::DiffStageSelection => self.apply_line_selection(false),
@@ -2659,6 +2717,14 @@ impl TuiApp {
             self.prompt = Some((Prompt::SearchQuery, self.search.query.clone()));
             return;
         }
+        if queue.take(Modifiers::NONE, Key::I) {
+            self.prompt = Some((Prompt::SearchInclude, self.search.include.clone()));
+            return;
+        }
+        if queue.take(Modifiers::NONE, Key::X) {
+            self.prompt = Some((Prompt::SearchExclude, self.search.exclude.clone()));
+            return;
+        }
         if queue.take(Modifiers::NONE, Key::R) {
             if self.search.hits.is_empty() {
                 self.error = Some("nothing to replace (run a search first)".to_string());
@@ -2688,16 +2754,56 @@ impl TuiApp {
         if queue.take(Modifiers::SHIFT, Key::G) {
             self.search.cursor = last;
         }
+        let cur = rows.get(self.search.cursor.min(last)).cloned();
+        if queue.take(Modifiers::NONE, Key::L) {
+            self.search_fold(cur.as_ref(), false);
+        }
+        if queue.take(Modifiers::NONE, Key::H) {
+            self.search_fold(cur.as_ref(), true);
+        }
         if queue.take(Modifiers::NONE, Key::Enter) || queue.take(Modifiers::NONE, Key::E) {
-            let path = match rows.get(self.search.cursor.min(last)) {
-                Some(SearchRow::File(i)) | Some(SearchRow::Line(i, _)) => {
-                    self.search.hits.get(*i).map(|f| f.path.clone())
+            match cur {
+                Some(SearchRow::Dir { ref path, .. }) => {
+                    if !self.search.folded_dirs.remove(path) {
+                        self.search.folded_dirs.insert(path.clone());
+                    }
                 }
-                None => None,
-            };
-            if let Some(path) = path {
-                self.pending_editor = Some(self.selected.join(path));
+                Some(SearchRow::File { hit, .. }) => {
+                    if let Some(f) = self.search.hits.get(hit) {
+                        let line = f.lines.first().map(|l| l.line_no);
+                        self.pending_editor = Some((self.selected.join(&f.path), line));
+                    }
+                }
+                Some(SearchRow::Line(i, j)) => {
+                    if let Some(f) = self.search.hits.get(i) {
+                        let line = f.lines.get(j).map(|l| l.line_no);
+                        self.pending_editor = Some((self.selected.join(&f.path), line));
+                    }
+                }
+                None => {}
             }
+        }
+    }
+
+    fn search_fold(&mut self, row: Option<&SearchRow>, fold: bool) {
+        match row {
+            Some(SearchRow::Dir { path, .. }) => {
+                if fold {
+                    self.search.folded_dirs.insert(path.clone());
+                } else {
+                    self.search.folded_dirs.remove(path);
+                }
+            }
+            Some(SearchRow::File { hit, .. }) | Some(SearchRow::Line(hit, _)) => {
+                if let Some(f) = self.search.hits.get(*hit) {
+                    if fold {
+                        self.search.folded_files.insert(f.path.clone());
+                    } else {
+                        self.search.folded_files.remove(&f.path);
+                    }
+                }
+            }
+            None => {}
         }
     }
 
@@ -2709,9 +2815,18 @@ impl TuiApp {
             self.search.hits.clear();
             return;
         }
-        match twit_core::search::Matcher::new(query, false, false) {
-            Ok(m) => {
-                self.search.hits = twit_core::search::search_repo(&self.selected, &m);
+        let m = match twit_core::search::Matcher::new(query, false, false) {
+            Ok(m) => m,
+            Err(e) => {
+                self.error = Some(format!("search failed: {e}"));
+                return;
+            }
+        };
+        let filter =
+            twit_core::search::SearchFilter::parse(&self.search.include, &self.search.exclude);
+        match twit_core::search::search_repo_filtered(&self.selected, &m, &filter) {
+            Ok(hits) => {
+                self.search.hits = hits;
                 self.error = None;
             }
             Err(e) => self.error = Some(format!("search failed: {e}")),
@@ -2824,7 +2939,7 @@ impl TuiApp {
             items.get(self.graph_cursor.min(items.len().saturating_sub(1)))
             && let Some(f) = self.commit_files.get(*k)
         {
-            self.pending_editor = Some(self.selected.join(&f.path));
+            self.pending_editor = Some((self.selected.join(&f.path), None));
         }
     }
 
@@ -2977,7 +3092,7 @@ impl TuiApp {
         }
     }
 
-    pub fn open_in_embedded(&mut self, file: &Path) -> bool {
+    pub fn open_in_embedded(&mut self, file: &Path, line: Option<u32>) -> bool {
         if !matches!(self.view_mode, ViewMode::All | ViewMode::Single(View::Main)) {
             return false;
         }
@@ -2988,13 +3103,14 @@ impl TuiApp {
         self.active_tab = Tab::Editor;
         self.focus = Pane::RightTab;
         if self.nvim_socket.exists() {
-            match twit_core::editor::open_abs_in_server(file, &self.nvim_socket) {
+            match twit_core::editor::open_abs_in_server_at(file, &self.nvim_socket, line) {
                 Ok(()) => self.error = None,
                 Err(e) => self.error = Some(e),
             }
         } else {
             self.pending_open = Some((
                 file.to_path_buf(),
+                line,
                 std::time::Instant::now() + std::time::Duration::from_secs(10),
             ));
         }
@@ -3002,7 +3118,7 @@ impl TuiApp {
     }
 
     pub fn poll_pending_open(&mut self) -> bool {
-        let Some((file, deadline)) = self.pending_open.clone() else {
+        let Some((file, line, deadline)) = self.pending_open.clone() else {
             return false;
         };
         if !self.term.as_mut().is_some_and(|t| t.is_alive()) {
@@ -3011,7 +3127,7 @@ impl TuiApp {
         }
         if self.nvim_socket.exists() {
             self.pending_open = None;
-            match twit_core::editor::open_abs_in_server(&file, &self.nvim_socket) {
+            match twit_core::editor::open_abs_in_server_at(&file, &self.nvim_socket, line) {
                 Ok(()) => self.error = None,
                 Err(e) => self.error = Some(e),
             }

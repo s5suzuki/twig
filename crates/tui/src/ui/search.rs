@@ -12,11 +12,18 @@ const MATCH_FG: Color = Color::Yellow;
 pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let parts = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
 
+    let mut filt = String::new();
+    if !app.search.include.is_empty() {
+        filt.push_str(&format!("  include:{}", app.search.include));
+    }
+    if !app.search.exclude.is_empty() {
+        filt.push_str(&format!("  exclude:{}", app.search.exclude));
+    }
     let status = if app.search.query.is_empty() {
-        "/: search  (Enter/e: open in editor, r: replace all)".to_string()
+        format!("/: search  i: include  x: exclude  (Enter/e: open, r: replace all){filt}")
     } else {
         format!(
-            "\"{}\" — {} matches in {} files  (/: search  r: replace  Enter: editor)",
+            "\"{}\" — {} matches in {} files  (/ i x  h/l fold  Enter: editor){filt}",
             app.search.query,
             app.search.match_count(),
             app.search.hits.len()
@@ -60,17 +67,39 @@ fn render_row(app: &TuiApp, row: &SearchRow, focused: bool) -> Line<'static> {
         Style::default()
     };
     match row {
-        SearchRow::File(i) => {
-            let f = &app.search.hits[*i];
+        SearchRow::Dir {
+            name,
+            open,
+            depth,
+            ..
+        } => {
+            let indent = "  ".repeat(*depth);
+            let arrow = if *open { "▾" } else { "▸" };
             Line::from(Span::styled(
-                format!("{} ({})", f.path, f.lines.len()),
+                format!("{indent}{arrow} {name}/"),
+                cursor_style.fg(Color::Cyan),
+            ))
+        }
+        SearchRow::File { hit, depth } => {
+            let f = &app.search.hits[*hit];
+            let indent = "  ".repeat(*depth);
+            let name = f.path.rsplit('/').next().unwrap_or(&f.path);
+            let arrow = if app.search.folded_files.contains(&f.path) {
+                "▸"
+            } else {
+                "▾"
+            };
+            Line::from(Span::styled(
+                format!("{indent}{arrow} {} ({})", name, f.lines.len()),
                 cursor_style.add_modifier(Modifier::BOLD).fg(FOCUS_FG),
             ))
         }
         SearchRow::Line(i, j) => {
             let l = &app.search.hits[*i].lines[*j];
+            let depth = app.search.hits[*i].path.matches('/').count();
+            let indent = "  ".repeat(depth + 1);
             let mut spans = vec![Span::styled(
-                format!("  {:>4}: ", l.line_no),
+                format!("{indent}{:>4}: ", l.line_no),
                 cursor_style.fg(Color::DarkGray),
             )];
             let text = &l.text;
