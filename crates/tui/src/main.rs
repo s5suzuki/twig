@@ -37,8 +37,7 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--view" => {
                 let v = it.next().ok_or("--view requires a value")?;
-                args.view =
-                    Some(View::parse(&v).ok_or_else(|| format!("unknown view: {v}"))?);
+                args.view = Some(View::parse(&v).ok_or_else(|| format!("unknown view: {v}"))?);
             }
             "--session" => {
                 args.session = Some(it.next().ok_or("--session requires a value")?);
@@ -115,7 +114,9 @@ fn main() {
     if let ViewMode::Single(view) = view_mode {
         let token = session_token.unwrap_or_else(|| session::repo_token(&path));
         let dir = session::session_dir(&token);
-        let zellij_pane = std::env::var("ZELLIJ_PANE_ID").ok().filter(|v| !v.is_empty());
+        let zellij_pane = std::env::var("ZELLIJ_PANE_ID")
+            .ok()
+            .filter(|v| !v.is_empty());
         match Session::join(&dir, view.name(), std::process::id(), &path, zellij_pane) {
             Ok(s) => app.session = Some(s),
             Err(e) => app.error = Some(format!("session: {e}")),
@@ -134,7 +135,21 @@ fn main() {
     }
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, &mut app, &watch_rx, watcher.ok().as_ref(), cols);
+    let kb_enhanced = kb_enhancement_supported();
+    if kb_enhanced {
+        push_kb_enhancement();
+    }
+    let result = run(
+        &mut terminal,
+        &mut app,
+        &watch_rx,
+        watcher.ok().as_ref(),
+        cols,
+        kb_enhanced,
+    );
+    if kb_enhanced {
+        pop_kb_enhancement();
+    }
     ratatui::restore();
     let broadcast = app.quit_broadcast;
     if let Some(mut sess) = app.session.take() {
@@ -146,6 +161,23 @@ fn main() {
         eprintln!("twit: {e}");
         std::process::exit(1);
     }
+}
+
+fn kb_enhancement_supported() -> bool {
+    ratatui::crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
+}
+
+fn push_kb_enhancement() {
+    use ratatui::crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+    let _ = ratatui::crossterm::execute!(
+        std::io::stdout(),
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
+}
+
+fn pop_kb_enhancement() {
+    use ratatui::crossterm::event::PopKeyboardEnhancementFlags;
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
 }
 
 fn run_shell(repo: &std::path::Path, session_token: Option<String>, shrink: Option<u16>) -> ! {
@@ -194,9 +226,6 @@ fn shrink_pane_height(steps: u16) {
     let read = || ratatui::crossterm::terminal::size().ok().map(|(_, h)| h);
     let overall = std::time::Instant::now() + Duration::from_secs(5);
 
-    // A freshly-created zellij pane briefly reports a height of 0; wait for a real size.
-    // Each `resize decrease up` step shrinks by a fixed fraction of the tab height, so a
-    // fixed step count (not a row target) is independent of the terminal size.
     let mut h = loop {
         if std::time::Instant::now() >= overall {
             return;
@@ -212,8 +241,6 @@ fn shrink_pane_height(steps: u16) {
             break;
         }
         zellij::resize_self_step("up");
-        // zellij applies a resize asynchronously, so wait until the height actually drops
-        // (up to 600ms) rather than polling on a fixed, too-short interval.
         let step_deadline = std::time::Instant::now() + Duration::from_millis(600);
         let mut changed = false;
         while std::time::Instant::now() < step_deadline {
@@ -238,6 +265,7 @@ fn run(
     watch_rx: &mpsc::Receiver<()>,
     watcher: Option<&WorktreeWatcher>,
     cols: Option<u16>,
+    kb_enhanced: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     terminal.draw(|frame| ui::draw(frame, app))?;
 
@@ -343,11 +371,11 @@ fn run(
             clipboard::copy(&text)?;
         }
         if let Some(argv) = app.pending_shell.take() {
-            run_suspended(terminal, app, &argv)?;
+            run_suspended(terminal, app, &argv, kb_enhanced)?;
             dirty = true;
         }
         if let Some(file) = app.pending_editor.take() {
-            open_editor(terminal, app, &file)?;
+            open_editor(terminal, app, &file, kb_enhanced)?;
             dirty = true;
         }
         if app.quit {
@@ -364,6 +392,7 @@ fn run_suspended(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut TuiApp,
     argv: &[String],
+    kb_enhanced: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use ratatui::crossterm::execute;
     use ratatui::crossterm::terminal::{
@@ -372,7 +401,15 @@ fn run_suspended(
 
     disable_raw_mode()?;
     execute!(std::io::stdout(), LeaveAlternateScreen)?;
-    let status = std::process::Command::new(&argv[0]).args(&argv[1..]).status();
+    if kb_enhanced {
+        pop_kb_enhancement();
+    }
+    let status = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .status();
+    if kb_enhanced {
+        push_kb_enhancement();
+    }
     enable_raw_mode()?;
     execute!(std::io::stdout(), EnterAlternateScreen)?;
     terminal.clear()?;
@@ -387,6 +424,7 @@ fn open_editor(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut TuiApp,
     file: &std::path::Path,
+    kb_enhanced: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use ratatui::crossterm::execute;
     use ratatui::crossterm::terminal::{
@@ -407,8 +445,7 @@ fn open_editor(
     }
 
     if let Some(server) = nvim_server() {
-        if let Err(e) = twit_core::editor::open_abs_in_server(file, std::path::Path::new(&server))
-        {
+        if let Err(e) = twit_core::editor::open_abs_in_server(file, std::path::Path::new(&server)) {
             app.error = Some(e);
         }
         return Ok(());
@@ -416,7 +453,13 @@ fn open_editor(
 
     disable_raw_mode()?;
     execute!(std::io::stdout(), LeaveAlternateScreen)?;
+    if kb_enhanced {
+        pop_kb_enhancement();
+    }
     let status = std::process::Command::new("nvim").arg(file).status();
+    if kb_enhanced {
+        push_kb_enhancement();
+    }
     enable_raw_mode()?;
     execute!(std::io::stdout(), EnterAlternateScreen)?;
     terminal.clear()?;
