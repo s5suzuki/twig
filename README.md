@@ -49,6 +49,41 @@ twit --new-tab <repo path>   # expand the split into a new tab
 twit --single <repo path>    # force one integrated window even under Zellij
 ```
 
+## Configuration
+
+Both `twig` and `twit` read `$XDG_CONFIG_HOME/twig/config.toml`.
+
+Every key is optional; anything omitted falls back to its default. The full list, with defaults:
+
+```toml
+font_size = 13.0                  # GUI      Base UI font size in points
+theme = "dark"                    # GUI      "dark" | "light" | "catppuccin-mocha"
+accent = "lavender"               # GUI      Accent color (Catppuccin palette): "rosewater",
+                                  #          "flamingo", "pink", "mauve", "red", "maroon", "peach",
+                                  #          "yellow", "green", "teal", "sky", "sapphire", "blue",
+                                  #          "lavender"
+graph_commit_limit = 200          # GUI+TUI  Max commits loaded into the graph
+graph_show_author = true          # GUI+TUI  Show the author next to each commit
+graph_show_date = true            # GUI+TUI  Show the date next to each commit
+graph_files_tree = true           # GUI      Expanded commit files as a folder tree (false = flat list)
+mono_font = "hackgen-console-nf"  # GUI      Diff/terminal font: "hackgen-console-nf" |
+                                  #          "hackgen-console" | "hackgen"
+                                  #          (falls back to the first installed variant)
+show_title_bar = true             # GUI      Native window title bar
+show_files = false                # GUI      List worktree files under each repository in the sidebar
+confirm_discard = true            # GUI+TUI  Ask for confirmation before discarding changes
+commit_message_guide = true       # GUI      Show the 50/72 commit-message guide in the commit box
+
+[keys.global]                     # GUI+TUI  Key rebinding — see "Rebinding" below
+# "ctrl+t" = "toggle-shell"
+```
+
+Notes:
+
+- Keys marked *TUI* also apply to `twit`; the rest are GUI-only.
+- A file that fails to parse (or contains an invalid value, e.g. an unknown `theme`) is
+  silently ignored and the defaults are used.
+
 ## Keybindings
 
 Press `?` in any pane (outside a text field or the terminal) to pop up a cheat-sheet of the bindings currently in effect.
