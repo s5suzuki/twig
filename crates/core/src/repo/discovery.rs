@@ -73,7 +73,28 @@ pub fn refresh_badges(node: &mut RepoNode) {
             child.dirty = dirty;
             child.drifted = drifted;
         }
-        refresh_badges(child);
+        let now_initialized = Repository::open(&child.path).is_ok();
+        if now_initialized != child.initialized {
+            rediscover_submodule(child);
+        } else {
+            refresh_badges(child);
+        }
+    }
+}
+
+fn rediscover_submodule(child: &mut RepoNode) {
+    match discover(&child.path) {
+        Ok(mut fresh) => {
+            fresh.name = std::mem::take(&mut child.name);
+            fresh.expanded = child.expanded;
+            fresh.dirty = child.dirty;
+            fresh.drifted = child.drifted;
+            *child = fresh;
+        }
+        Err(_) => {
+            child.initialized = false;
+            child.children.clear();
+        }
     }
 }
 
