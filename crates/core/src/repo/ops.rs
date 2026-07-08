@@ -79,9 +79,8 @@ pub fn discard(repo_path: &Path, paths: &[String]) -> Result<(), git2::Error> {
 
     let mut file_paths = Vec::new();
     for p in paths {
-        match find_submodule_by_path(&repo, p) {
-            Some(sm) => discard_submodule(&sm)?,
-            None => file_paths.push(p),
+        if !reset_submodule_pointer(&repo, p)? {
+            file_paths.push(p);
         }
     }
 
@@ -94,6 +93,16 @@ pub fn discard(repo_path: &Path, paths: &[String]) -> Result<(), git2::Error> {
         cb.path(p);
     }
     repo.checkout_index(None, Some(&mut cb))
+}
+
+pub(crate) fn reset_submodule_pointer(repo: &Repository, path: &str) -> Result<bool, git2::Error> {
+    match find_submodule_by_path(repo, path) {
+        Some(sm) => {
+            discard_submodule(&sm)?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 fn find_submodule_by_path<'a>(repo: &'a Repository, path: &str) -> Option<Submodule<'a>> {
