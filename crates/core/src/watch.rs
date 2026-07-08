@@ -348,9 +348,12 @@ mod tests {
 
         let notified = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let n = notified.clone();
-        let w = WorktreeWatcher::new(&tmp, Arc::new(move || {
-            n.fetch_add(1, Ordering::Relaxed);
-        }))
+        let w = WorktreeWatcher::new(
+            &tmp,
+            Arc::new(move || {
+                n.fetch_add(1, Ordering::Relaxed);
+            }),
+        )
         .unwrap();
 
         std::thread::sleep(Duration::from_millis(400));

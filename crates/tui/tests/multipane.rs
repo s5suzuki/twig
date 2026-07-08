@@ -28,10 +28,8 @@ fn git(dir: &Path, args: &[&str]) {
 
 fn temp_dir(kind: &str) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "twig-multipane-{kind}-{}-{n}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("twig-multipane-{kind}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -76,9 +74,8 @@ fn key(code: KeyCode) -> KeyEvent {
 
 fn pane(repo: &Path, session_dir: &Path, view: View) -> TuiApp {
     let mut app = TuiApp::with_view(repo, ViewMode::Single(view)).unwrap();
-    app.session = Some(
-        Session::join(session_dir, view.name(), std::process::id(), repo, None).unwrap(),
-    );
+    app.session =
+        Some(Session::join(session_dir, view.name(), std::process::id(), repo, None).unwrap());
     app
 }
 
@@ -105,7 +102,11 @@ fn editor_request_from_changes_pane_opens_editor_tab_in_main_pane() {
     );
 
     assert!(main.sync_session(), "main picks up the editor request");
-    assert_eq!(main.active_tab, Tab::Editor, "main switches to the editor tab");
+    assert_eq!(
+        main.active_tab,
+        Tab::Editor,
+        "main switches to the editor tab"
+    );
     assert!(main.term.is_some(), "main spawned the embedded nvim");
 
     assert!(
@@ -244,7 +245,10 @@ fn graph_file_selection_shows_per_file_diff_in_main_pane() {
     assert_eq!(main.selected_commit_file, Some("a.txt".to_string()));
     assert_eq!(main.active_tab, Tab::Diff);
     let lines = screen(&mut main, 120, 30);
-    assert!(lines.iter().any(|l| l.contains("second")), "a.txt diff shown");
+    assert!(
+        lines.iter().any(|l| l.contains("second")),
+        "a.txt diff shown"
+    );
     assert!(
         !lines.iter().any(|l| l.contains("boo")),
         "b.txt changes not in per-file diff"
@@ -331,11 +335,19 @@ fn sidebar_repo_switch_rescopes_other_panes() {
     main.sync_session();
 
     sidebar.handle_input(vec![key(KeyCode::Char('j')), key(KeyCode::Enter)]);
-    assert!(sidebar.selected.ends_with("sub"), "sidebar switched to submodule");
+    assert!(
+        sidebar.selected.ends_with("sub"),
+        "sidebar switched to submodule"
+    );
 
     assert!(main.sync_session());
     assert!(main.selected.ends_with("sub"), "main rescoped to submodule");
-    assert!(main.graph.rows.iter().any(|r| r.summary.contains("child init")));
+    assert!(
+        main.graph
+            .rows
+            .iter()
+            .any(|r| r.summary.contains("child init"))
+    );
 }
 
 #[test]
@@ -353,7 +365,10 @@ fn quit_in_one_pane_leaves_the_others_running() {
     // `Q` quits only this pane and never broadcasts to siblings.
     a.handle_input(vec![key(KeyCode::Char('Q'))]);
     assert!(a.quit);
-    assert!(!a.quit_broadcast, "quit stays local, no cross-pane broadcast");
+    assert!(
+        !a.quit_broadcast,
+        "quit stays local, no cross-pane broadcast"
+    );
     let broadcast = a.quit_broadcast;
     a.session.take().unwrap().shutdown(broadcast);
 

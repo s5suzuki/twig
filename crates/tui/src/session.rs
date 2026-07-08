@@ -168,9 +168,7 @@ impl Session {
     }
 
     pub fn request_editor(&mut self, file: &Path, line: Option<u32>) -> bool {
-        let has_main = self
-            .read()
-            .is_some_and(|s| s.panes.contains_key("main"));
+        let has_main = self.read().is_some_and(|s| s.panes.contains_key("main"));
         if !has_main {
             return false;
         }
@@ -226,9 +224,7 @@ impl Session {
 
     pub fn publish(&mut self, f: impl FnOnce(&mut SharedState)) {
         let lock = self.lock();
-        let mut state = self
-            .read()
-            .unwrap_or_else(|| SharedState::new(&self.repo));
+        let mut state = self.read().unwrap_or_else(|| SharedState::new(&self.repo));
         state.panes.insert(self.view.clone(), self.pid);
         f(&mut state);
         state.generation += 1;
@@ -288,7 +284,8 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("twig-session-test-{}-{n}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("twig-session-test-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -315,7 +312,8 @@ mod tests {
         let dir = temp_dir();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("state.json"), b"{not json").unwrap();
-        let sess = Session::join(&dir, "main", std::process::id(), Path::new("/repo/b"), None).unwrap();
+        let sess =
+            Session::join(&dir, "main", std::process::id(), Path::new("/repo/b"), None).unwrap();
         let state = sess.read().unwrap();
         assert_eq!(state.selected_repo, Path::new("/repo/b"));
         assert!(!state.quit);
@@ -352,7 +350,10 @@ mod tests {
         let t = b.tick();
         assert_eq!(t.changed.unwrap().selected_commit, Some("abc".into()));
         assert!(!t.quit);
-        assert!(b.tick().changed.is_none(), "same generation not re-reported");
+        assert!(
+            b.tick().changed.is_none(),
+            "same generation not re-reported"
+        );
 
         a.publish(|s| s.quit = true);
         assert!(b.tick().quit);
@@ -392,7 +393,11 @@ mod tests {
         let diff = Session::join(&dir, "diff", pid, repo, Some("3".into())).unwrap();
         assert_eq!(changes.diff_target_pane(), Some("3".to_string()));
         assert_eq!(main.diff_target_pane(), Some("3".to_string()));
-        assert_eq!(diff.diff_target_pane(), None, "own pane is not a jump target");
+        assert_eq!(
+            diff.diff_target_pane(),
+            None,
+            "own pane is not a jump target"
+        );
 
         let outside = Session::join(&dir, "graph", pid, repo, None).unwrap();
         assert_eq!(outside.diff_target_pane(), Some("3".to_string()));
@@ -411,7 +416,10 @@ mod tests {
         assert!(state_gone_or_quit(&dir), "quit broadcast stops the shell");
 
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(state_gone_or_quit(&dir), "removed session dir stops the shell");
+        assert!(
+            state_gone_or_quit(&dir),
+            "removed session dir stops the shell"
+        );
     }
 
     #[test]
@@ -430,10 +438,7 @@ mod tests {
             "registration is idempotent and survives joins"
         );
 
-        assert!(
-            a.shutdown(true).is_empty(),
-            "non-final pane closes nothing"
-        );
+        assert!(a.shutdown(true).is_empty(), "non-final pane closes nothing");
         assert_eq!(
             b.shutdown(false),
             vec!["terminal_9".to_string()],
@@ -450,7 +455,10 @@ mod tests {
         let mut a = Session::join(&dir, "changes", pid, repo, None).unwrap();
         let mut b = Session::join(&dir, "main", pid, repo, None).unwrap();
         a.shutdown(true);
-        assert!(dir.join("state.json").exists(), "state kept while a pane remains");
+        assert!(
+            dir.join("state.json").exists(),
+            "state kept while a pane remains"
+        );
         assert!(b.read().unwrap().quit, "quit broadcast to remaining panes");
         b.shutdown(false);
         assert!(!dir.exists(), "last pane cleans up the session dir");

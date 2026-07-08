@@ -81,7 +81,10 @@ fn draw_prompt_popup(frame: &mut Frame, app: &TuiApp, area: Rect) {
 
     let shadow_rect = area.intersection(Rect::new(x + 2, y + 1, w, h));
     frame.render_widget(Clear, shadow_rect);
-    frame.render_widget(Block::default().style(Style::default().bg(shadow)), shadow_rect);
+    frame.render_widget(
+        Block::default().style(Style::default().bg(shadow)),
+        shadow_rect,
+    );
 
     frame.render_widget(Clear, rect);
     let block = Block::bordered()
@@ -321,9 +324,7 @@ fn draw_change_list(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     for (i, item) in items.iter().enumerate().skip(app.changes_scroll).take(h) {
         let (text, header) = match item {
-            ChangesItem::Group { staged: true } => {
-                (format!("Staged ({})", app.staged.len()), true)
-            }
+            ChangesItem::Group { staged: true } => (format!("Staged ({})", app.staged.len()), true),
             ChangesItem::Group { staged: false } => {
                 (format!("Changes ({})", app.unstaged.len()), true)
             }
@@ -346,12 +347,7 @@ fn draw_change_list(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
             } => {
                 let name = path.rsplit('/').next().unwrap_or(path);
                 (
-                    format!(
-                        "{}{} {}",
-                        "  ".repeat(*depth),
-                        marker(path, *staged),
-                        name
-                    ),
+                    format!("{}{} {}", "  ".repeat(*depth), marker(path, *staged), name),
                     false,
                 )
             }

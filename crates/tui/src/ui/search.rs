@@ -68,10 +68,7 @@ fn render_row(app: &TuiApp, row: &SearchRow, focused: bool) -> Line<'static> {
     };
     match row {
         SearchRow::Dir {
-            name,
-            open,
-            depth,
-            ..
+            name, open, depth, ..
         } => {
             let indent = "  ".repeat(*depth);
             let arrow = if *open { "▾" } else { "▸" };

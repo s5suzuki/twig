@@ -180,7 +180,8 @@ impl Term {
             let y = rect.top() + cursor_row.clamp(0, self.be.rows() as i32 - 1) as f32 * rh;
             Rect::from_min_size(pos2(x, y), vec2(cw, rh))
         };
-        if cur.shape != CursorShape::Hidden && cursor_row >= 0 && cursor_row < self.be.rows() as i32 {
+        if cur.shape != CursorShape::Hidden && cursor_row >= 0 && cursor_row < self.be.rows() as i32
+        {
             let x = rect.left() + cur.point.column.0 as f32 * cw;
             let y = rect.top() + cursor_row as f32 * rh;
             let solid = if focused {
@@ -443,8 +444,15 @@ impl Term {
                 }
                 egui::Event::PointerMoved(pos) => {
                     if self.selecting {
-                        let (point, side) =
-                            pos_to_point(pos, rect, cw, rh, self.be.cols(), self.be.rows(), display_offset);
+                        let (point, side) = pos_to_point(
+                            pos,
+                            rect,
+                            cw,
+                            rh,
+                            self.be.cols(),
+                            self.be.rows(),
+                            display_offset,
+                        );
                         if let Some(sel) = self.be.term.selection.as_mut() {
                             sel.update(point, side);
                         }

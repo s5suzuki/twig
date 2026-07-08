@@ -136,7 +136,10 @@ mod tests {
 
         let top = list_files(&tmp, &[]);
         let names: Vec<&str> = top.iter().map(|f| f.name.as_str()).collect();
-        assert!(names.contains(&".gitignore"), "dotfiles must show: {names:?}");
+        assert!(
+            names.contains(&".gitignore"),
+            "dotfiles must show: {names:?}"
+        );
         assert!(names.contains(&"src"));
         assert!(!names.contains(&".git"), "the .git dir must be pruned");
         assert!(!names.contains(&"target"), ".gitignore must be respected");

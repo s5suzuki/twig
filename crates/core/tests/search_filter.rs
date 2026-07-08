@@ -49,6 +49,9 @@ fn empty_filter_walks_all() {
     let dir = fixture("empty");
     let m = Matcher::new("needle", false, true).unwrap();
     let hits = search_repo(&dir, &m, &SearchFilter::default());
-    assert_eq!(paths(&hits), vec!["a.rs", "b.txt", "sub/c.rs", "sub/skip.log"]);
+    assert_eq!(
+        paths(&hits),
+        vec!["a.rs", "b.txt", "sub/c.rs", "sub/skip.log"]
+    );
     let _ = fs::remove_dir_all(&dir);
 }

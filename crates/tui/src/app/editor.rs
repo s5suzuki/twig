@@ -251,9 +251,6 @@ mod tests {
         assert_eq!(mouse_mods(KeyModifiers::SHIFT), 4);
         assert_eq!(mouse_mods(KeyModifiers::ALT), 8);
         assert_eq!(mouse_mods(KeyModifiers::CONTROL), 16);
-        assert_eq!(
-            mouse_mods(KeyModifiers::SHIFT | KeyModifiers::CONTROL),
-            20
-        );
+        assert_eq!(mouse_mods(KeyModifiers::SHIFT | KeyModifiers::CONTROL), 20);
     }
 }

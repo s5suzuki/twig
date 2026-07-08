@@ -126,14 +126,25 @@ fn embedded_nvim_tab_starts_edits_and_keeps_q_local() {
 
     let mut app = TuiApp::new(&dir).unwrap();
     app.focus = Pane::RightTab;
-    app.handle_input(vec![key(KeyCode::Tab), key(KeyCode::Tab), key(KeyCode::Tab)]);
-    assert_eq!(app.active_tab, Tab::Editor, "tab cycles into the editor tab");
+    app.handle_input(vec![
+        key(KeyCode::Tab),
+        key(KeyCode::Tab),
+        key(KeyCode::Tab),
+    ]);
+    assert_eq!(
+        app.active_tab,
+        Tab::Editor,
+        "tab cycles into the editor tab"
+    );
     assert!(app.term.is_some(), "entering the tab spawns nvim");
 
     let file = dir.join("hello.txt");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        assert!(app.open_in_embedded(&file, None), "embedded editor accepts the file");
+        assert!(
+            app.open_in_embedded(&file, None),
+            "embedded editor accepts the file"
+        );
         if let Some(t) = app.term.as_mut() {
             t.pump();
         }
@@ -202,7 +213,11 @@ fn mouse_click_in_editor_moves_the_nvim_cursor() {
 
     let mut app = TuiApp::new(&dir).unwrap();
     app.focus = Pane::RightTab;
-    app.handle_input(vec![key(KeyCode::Tab), key(KeyCode::Tab), key(KeyCode::Tab)]);
+    app.handle_input(vec![
+        key(KeyCode::Tab),
+        key(KeyCode::Tab),
+        key(KeyCode::Tab),
+    ]);
     assert_eq!(app.active_tab, Tab::Editor);
 
     let file = dir.join("lines.txt");
@@ -213,10 +228,7 @@ fn mouse_click_in_editor_moves_the_nvim_cursor() {
             t.pump();
         }
         std::thread::sleep(Duration::from_millis(100));
-        if screen(&mut app, 120, 35)
-            .iter()
-            .any(|l| l.contains("L6"))
-        {
+        if screen(&mut app, 120, 35).iter().any(|l| l.contains("L6")) {
             break;
         }
         assert!(Instant::now() < deadline, "file never opened");
@@ -232,7 +244,10 @@ fn mouse_click_in_editor_moves_the_nvim_cursor() {
     }
 
     let area = app.editor_area.expect("editor drawn, area recorded");
-    assert!(app.wants_mouse_capture(), "editor focus enables mouse capture");
+    assert!(
+        app.wants_mouse_capture(),
+        "editor focus enables mouse capture"
+    );
 
     let at = |kind| MouseEvent {
         kind,

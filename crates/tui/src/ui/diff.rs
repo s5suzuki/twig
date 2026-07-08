@@ -75,10 +75,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let digits = max_no.to_string().len().max(2);
 
     let total_w = text_area.width as usize;
-    let text_w = total_w
-        .saturating_sub(1 + 2 * (digits + 1) + 1)
-        .max(20)
-        / 2;
+    let text_w = total_w.saturating_sub(1 + 2 * (digits + 1) + 1).max(20) / 2;
 
     let end = (app.diff_scroll + h).min(app.diff.rows.len());
     app.diff_hl
@@ -151,7 +148,10 @@ fn ensure_cursor_visible(app: &mut TuiApp, h: usize) {
     if h == 0 {
         return;
     }
-    let cursor = app.diff_nav.cursor.min(app.diff.rows.len().saturating_sub(1));
+    let cursor = app
+        .diff_nav
+        .cursor
+        .min(app.diff.rows.len().saturating_sub(1));
     if app.diff_center {
         app.diff_scroll = cursor.saturating_sub(h / 2);
         app.diff_center = false;
@@ -162,9 +162,7 @@ fn ensure_cursor_visible(app: &mut TuiApp, h: usize) {
     if cursor >= app.diff_scroll + h {
         app.diff_scroll = cursor + 1 - h;
     }
-    app.diff_scroll = app
-        .diff_scroll
-        .min(app.diff.rows.len().saturating_sub(1));
+    app.diff_scroll = app.diff_scroll.min(app.diff.rows.len().saturating_sub(1));
 }
 
 fn render_row(
@@ -186,10 +184,7 @@ fn render_row(
         DiffRow::Meta(text) => Line::from(vec![gutter, Span::raw(text.clone())]),
         DiffRow::FileHeader(path) => Line::from(vec![
             gutter,
-            Span::styled(
-                path.clone(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(path.clone(), Style::default().add_modifier(Modifier::BOLD)),
         ]),
         DiffRow::Hunk { header, .. } => Line::from(vec![
             gutter,

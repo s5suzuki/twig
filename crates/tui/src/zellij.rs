@@ -80,9 +80,27 @@ pub fn focus_pane(target: &str) {
 
 pub fn split_current_tab(repo: &Path, token: &str) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    run_pane(&exe, repo, "changes", "right", &["--view", "changes", "--session", token, "--cols", "36"])?;
-    run_pane(&exe, repo, "graph | diff", "right", &["--view", "main", "--session", token])?;
-    run_pane(&exe, repo, "terminal", "down", &["--shell", "--session", token, "--shrink", "4"])?;
+    run_pane(
+        &exe,
+        repo,
+        "changes",
+        "right",
+        &["--view", "changes", "--session", token, "--cols", "36"],
+    )?;
+    run_pane(
+        &exe,
+        repo,
+        "graph | diff",
+        "right",
+        &["--view", "main", "--session", token],
+    )?;
+    run_pane(
+        &exe,
+        repo,
+        "terminal",
+        "down",
+        &["--shell", "--session", token, "--shrink", "4"],
+    )?;
     let _ = action(&["move-focus", "up"]);
     let _ = action(&["move-focus", "left"]);
     Ok(())
@@ -100,7 +118,9 @@ fn run_pane(
         .arg(exe)
         .args(args)
         .arg(repo);
-    let out = cmd.output().map_err(|e| format!("zellij not runnable: {e}"))?;
+    let out = cmd
+        .output()
+        .map_err(|e| format!("zellij not runnable: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "zellij run failed: {}",

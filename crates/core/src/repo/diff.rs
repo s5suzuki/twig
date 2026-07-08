@@ -74,7 +74,11 @@ pub struct CommitFile {
 }
 
 pub enum CommitRowKind {
-    Folder { name: String, path: String, open: bool },
+    Folder {
+        name: String,
+        path: String,
+        open: bool,
+    },
     File(usize),
 }
 
@@ -798,7 +802,12 @@ mod tests {
             .into_iter()
             .map(|r| match r.kind {
                 CommitRowKind::Folder { name, open, .. } => {
-                    format!("{}[{}{}]", "  ".repeat(r.depth), if open { "" } else { "+" }, name)
+                    format!(
+                        "{}[{}{}]",
+                        "  ".repeat(r.depth),
+                        if open { "" } else { "+" },
+                        name
+                    )
                 }
                 CommitRowKind::File(i) => format!("{}{}", "  ".repeat(r.depth), files[i].path),
             })
@@ -834,11 +843,7 @@ mod tests {
 
     #[test]
     fn folded_dir_hides_children() {
-        let files = vec![
-            cf("src/app.rs"),
-            cf("src/ui/mod.rs"),
-            cf("src/ui/graph.rs"),
-        ];
+        let files = vec![cf("src/app.rs"), cf("src/ui/mod.rs"), cf("src/ui/graph.rs")];
         assert_eq!(
             render(&files, true, &["src/ui"]),
             vec!["[src]", "  [+ui]", "  src/app.rs"]

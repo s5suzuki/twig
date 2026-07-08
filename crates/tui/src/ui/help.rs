@@ -11,10 +11,7 @@ use crate::ui::{FOCUS_FG, wrap_plain};
 fn tui_supported(action: Action) -> bool {
     !matches!(
         action,
-        Action::FocusUp
-            | Action::FocusDown
-            | Action::ToggleShell
-            | Action::GraphContextMenu
+        Action::FocusUp | Action::FocusDown | Action::ToggleShell | Action::GraphContextMenu
     )
 }
 

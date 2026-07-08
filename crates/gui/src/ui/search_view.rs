@@ -101,7 +101,8 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) -> Option<SearchAction> {
     });
 
     ui.horizontal(|ui| {
-        ui.label("\u{f0b0}").on_hover_text("Files to include / exclude (glob)");
+        ui.label("\u{f0b0}")
+            .on_hover_text("Files to include / exclude (glob)");
         let inc = ui.add(
             egui::TextEdit::singleline(&mut app.search.include)
                 .hint_text("files to include")
@@ -112,8 +113,8 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) -> Option<SearchAction> {
                 .hint_text("files to exclude")
                 .desired_width(180.0),
         );
-        let entered = (inc.lost_focus() || exc.lost_focus())
-            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let entered =
+            (inc.lost_focus() || exc.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if entered && !app.search.query.is_empty() {
             run = true;
         }
@@ -263,7 +264,8 @@ fn draw_file(ui: &mut egui::Ui, fi: usize, depth: usize, ctx: &mut RenderCtx) {
             ui.add_space((depth + 1) as f32 * INDENT + 4.0);
             let mut checked = selected.contains(&(f.path.clone(), l.line_no));
             if ui.checkbox(&mut checked, "").changed() {
-                ctx.intents.push(Intent::ToggleLine(f.path.clone(), l.line_no));
+                ctx.intents
+                    .push(Intent::ToggleLine(f.path.clone(), l.line_no));
             }
             ui.add(egui::Label::new(
                 egui::RichText::new(format!("{:>5}", l.line_no))

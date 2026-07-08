@@ -193,9 +193,7 @@ fn render_rows(
     for (i, row) in diff.rows.iter().enumerate() {
         match row {
             DiffRow::Meta(text) => {
-                ui.add(
-                    Label::new(RichText::new(text).font(FontId::proportional(13.0))).wrap(),
-                );
+                ui.add(Label::new(RichText::new(text).font(FontId::proportional(13.0))).wrap());
             }
             DiffRow::FileHeader(path) => {
                 ui.add_space(4.0);
@@ -321,7 +319,11 @@ fn render_rows(
                             cursor_bar,
                         );
                         if nav.scroll_to_cursor {
-                            let align = if nav.center { Some(Align::Center) } else { None };
+                            let align = if nav.center {
+                                Some(Align::Center)
+                            } else {
+                                None
+                            };
                             ui.scroll_to_rect_animation(
                                 rrect,
                                 align,
