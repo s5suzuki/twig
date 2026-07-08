@@ -4,7 +4,9 @@ use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 
 use twit::app::{Pane, Tab, TuiApp};
 use twit::ui;
@@ -185,6 +187,91 @@ fn embedded_nvim_tab_starts_edits_and_keeps_q_local() {
     assert_ne!(app.focus, Pane::RightTab, "alt+h leaves the editor pane");
 
     cleanup(app, &[&dir]);
+}
+
+#[test]
+fn mouse_click_in_editor_moves_the_nvim_cursor() {
+    if !has_nvim() {
+        return;
+    }
+    isolate_xdg();
+    let dir = temp_repo();
+    std::fs::write(dir.join("lines.txt"), "L1\nL2\nL3\nL4\nL5\nL6\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.focus = Pane::RightTab;
+    app.handle_input(vec![key(KeyCode::Tab), key(KeyCode::Tab), key(KeyCode::Tab)]);
+    assert_eq!(app.active_tab, Tab::Editor);
+
+    let file = dir.join("lines.txt");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        assert!(app.open_in_embedded(&file, None));
+        if let Some(t) = app.term.as_mut() {
+            t.pump();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        if screen(&mut app, 120, 35)
+            .iter()
+            .any(|l| l.contains("L6"))
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "file never opened");
+    }
+
+    app.term.as_mut().unwrap().feed(b"\x1b:set mouse=a\rgg");
+    let settle = Instant::now() + Duration::from_millis(600);
+    while Instant::now() < settle {
+        if let Some(t) = app.term.as_mut() {
+            t.pump();
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let area = app.editor_area.expect("editor drawn, area recorded");
+    assert!(app.wants_mouse_capture(), "editor focus enables mouse capture");
+
+    let at = |kind| MouseEvent {
+        kind,
+        column: area.x,
+        row: area.y + 2,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert!(
+        app.handle_mouse(vec![
+            at(MouseEventKind::Down(MouseButton::Left)),
+            at(MouseEventKind::Up(MouseButton::Left)),
+        ]),
+        "click inside the editor is forwarded to nvim"
+    );
+
+    app.term
+        .as_mut()
+        .unwrap()
+        .feed(b"\x1b:echo 'CURLINE='.line('.')\r");
+    wait_for(&mut app, "CURLINE=3", 10);
+
+    cleanup(app, &[&dir]);
+}
+
+#[test]
+fn mouse_capture_is_off_when_the_editor_is_not_focused() {
+    let dir = temp_repo();
+    let mut app = TuiApp::new(&dir).unwrap();
+    assert!(!app.wants_mouse_capture(), "no editor tab, no capture");
+    assert!(
+        !app.handle_mouse(vec![MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }]),
+        "mouse is a no-op outside the focused editor"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

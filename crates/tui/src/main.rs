@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use ratatui::crossterm::event::{self, Event, KeyEvent};
+use ratatui::crossterm::event::{self, Event, KeyEvent, MouseEvent};
 use twit_core::watch::WorktreeWatcher;
 
 use twit::app::{Tab, TuiApp, View, ViewMode};
@@ -154,6 +154,7 @@ fn main() {
     if kb_enhanced {
         pop_kb_enhancement();
     }
+    set_mouse_capture(false);
     ratatui::restore();
     let broadcast = app.quit_broadcast;
     if let Some(mut sess) = app.session.take() {
@@ -182,6 +183,15 @@ fn push_kb_enhancement() {
 fn pop_kb_enhancement() {
     use ratatui::crossterm::event::PopKeyboardEnhancementFlags;
     let _ = ratatui::crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+}
+
+fn set_mouse_capture(on: bool) {
+    use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+    let _ = if on {
+        ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture)
+    } else {
+        ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture)
+    };
 }
 
 fn run_shell(repo: &std::path::Path, session_token: Option<String>, shrink: Option<u16>) -> ! {
@@ -285,8 +295,15 @@ fn run(
         prev: None,
         step: 0,
     });
+    let mut mouse_on = false;
 
     loop {
+        let want_mouse = app.wants_mouse_capture();
+        if want_mouse != mouse_on {
+            set_mouse_capture(want_mouse);
+            mouse_on = want_mouse;
+        }
+
         if let Some(s) = shrink.as_mut() {
             if std::time::Instant::now() >= s.deadline {
                 shrink = None;
@@ -304,6 +321,7 @@ fn run(
         }
 
         let mut keys: Vec<KeyEvent> = Vec::new();
+        let mut mouse: Vec<MouseEvent> = Vec::new();
         let mut dirty = false;
 
         let editor_visible = app.active_tab == Tab::Editor && app.term.is_some();
@@ -316,6 +334,7 @@ fn run(
             loop {
                 match event::read()? {
                     Event::Key(k) => keys.push(k),
+                    Event::Mouse(m) => mouse.push(m),
                     Event::Resize(_, _) => dirty = true,
                     _ => {}
                 }
@@ -365,6 +384,10 @@ fn run(
             dirty = true;
         }
 
+        if !mouse.is_empty() && app.handle_mouse(mouse) {
+            dirty = true;
+        }
+
         if app.pending_focus_jump {
             app.pending_focus_jump = false;
             if let Some(target) = app.session.as_ref().and_then(|s| s.diff_target_pane()) {
@@ -375,11 +398,11 @@ fn run(
             clipboard::copy(&text)?;
         }
         if let Some(argv) = app.pending_shell.take() {
-            run_suspended(terminal, app, &argv, kb_enhanced)?;
+            run_suspended(terminal, app, &argv, kb_enhanced, &mut mouse_on)?;
             dirty = true;
         }
         if let Some((file, line)) = app.pending_editor.take() {
-            open_editor(terminal, app, &file, line, kb_enhanced)?;
+            open_editor(terminal, app, &file, line, kb_enhanced, &mut mouse_on)?;
             dirty = true;
         }
         if app.quit {
@@ -397,12 +420,17 @@ fn run_suspended(
     app: &mut TuiApp,
     argv: &[String],
     kb_enhanced: bool,
+    mouse_on: &mut bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use ratatui::crossterm::execute;
     use ratatui::crossterm::terminal::{
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
     };
 
+    if *mouse_on {
+        set_mouse_capture(false);
+        *mouse_on = false;
+    }
     disable_raw_mode()?;
     execute!(std::io::stdout(), LeaveAlternateScreen)?;
     if kb_enhanced {
@@ -430,6 +458,7 @@ fn open_editor(
     file: &std::path::Path,
     line: Option<u32>,
     kb_enhanced: bool,
+    mouse_on: &mut bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use ratatui::crossterm::execute;
     use ratatui::crossterm::terminal::{
@@ -438,6 +467,11 @@ fn open_editor(
 
     if app.open_in_embedded(file, line) {
         return Ok(());
+    }
+
+    if *mouse_on {
+        set_mouse_capture(false);
+        *mouse_on = false;
     }
 
     if let Some(sess) = app.session.as_mut()

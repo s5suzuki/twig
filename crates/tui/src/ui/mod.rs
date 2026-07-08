@@ -404,6 +404,7 @@ fn draw_right(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
 }
 
 fn draw_editor(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
+    app.editor_area = Some(area);
     let alive = app.term.as_mut().is_some_and(|t| t.is_alive());
     if !alive {
         frame.render_widget(

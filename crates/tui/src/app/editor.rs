@@ -1,3 +1,5 @@
+use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
 use super::*;
 
 pub(super) fn nvim_socket_path() -> PathBuf {
@@ -32,6 +34,107 @@ impl TuiApp {
             && self.focus == Pane::RightTab
             && matches!(self.view_mode, ViewMode::All | ViewMode::Single(View::Main))
             && self.term.as_mut().is_some_and(|t| t.is_alive())
+    }
+
+    pub fn wants_mouse_capture(&self) -> bool {
+        !self.help_open
+            && !self.settings_open
+            && self.prompt.is_none()
+            && self.active_tab == Tab::Editor
+            && self.focus == Pane::RightTab
+            && matches!(self.view_mode, ViewMode::All | ViewMode::Single(View::Main))
+            && self.term.is_some()
+    }
+
+    pub fn handle_mouse(&mut self, events: Vec<MouseEvent>) -> bool {
+        if !self.wants_mouse_capture() {
+            return false;
+        }
+        let Some(area) = self.editor_area else {
+            return false;
+        };
+        let flags = self.term.as_ref().unwrap().mouse_flags();
+
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut scroll = 0i32;
+        for ev in events {
+            if ev.column < area.x
+                || ev.column >= area.x + area.width
+                || ev.row < area.y
+                || ev.row >= area.y + area.height
+            {
+                continue;
+            }
+            let col = (ev.column - area.x) as usize + 1;
+            let row = (ev.row - area.y) as usize + 1;
+            let mods = mouse_mods(ev.modifiers);
+            match ev.kind {
+                MouseEventKind::Down(btn) => {
+                    if !flags.report {
+                        continue;
+                    }
+                    let base = btn_base(btn);
+                    self.mouse_pressed = Some(base);
+                    self.last_mouse_cell = Some((ev.column, ev.row));
+                    bytes.extend_from_slice(&sgr_mouse(base + mods, col, row, true));
+                }
+                MouseEventKind::Up(btn) => {
+                    if !flags.report {
+                        continue;
+                    }
+                    self.mouse_pressed = None;
+                    bytes.extend_from_slice(&sgr_mouse(btn_base(btn) + mods, col, row, false));
+                }
+                MouseEventKind::Drag(btn) => {
+                    if !flags.report || !(flags.motion || flags.drag) {
+                        continue;
+                    }
+                    if self.last_mouse_cell == Some((ev.column, ev.row)) {
+                        continue;
+                    }
+                    self.last_mouse_cell = Some((ev.column, ev.row));
+                    bytes.extend_from_slice(&sgr_mouse(btn_base(btn) + 32 + mods, col, row, true));
+                }
+                MouseEventKind::Moved => {
+                    if !flags.report || !flags.motion {
+                        continue;
+                    }
+                    if self.last_mouse_cell == Some((ev.column, ev.row)) {
+                        continue;
+                    }
+                    self.last_mouse_cell = Some((ev.column, ev.row));
+                    bytes.extend_from_slice(&sgr_mouse(3 + 32 + mods, col, row, true));
+                }
+                MouseEventKind::ScrollUp => {
+                    if flags.report {
+                        bytes.extend_from_slice(&sgr_mouse(64 + mods, col, row, true));
+                    } else {
+                        scroll += 1;
+                    }
+                }
+                MouseEventKind::ScrollDown => {
+                    if flags.report {
+                        bytes.extend_from_slice(&sgr_mouse(65 + mods, col, row, true));
+                    } else {
+                        scroll -= 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut dirty = false;
+        if let Some(t) = self.term.as_mut() {
+            if !bytes.is_empty() {
+                t.feed(&bytes);
+                dirty = true;
+            }
+            if scroll != 0 {
+                t.scroll_lines(scroll);
+                dirty = true;
+            }
+        }
+        dirty
     }
 
     pub(super) fn handle_editor_key(&mut self, ev: KeyEvent) {
@@ -98,5 +201,59 @@ impl TuiApp {
             return true;
         }
         false
+    }
+}
+
+fn btn_base(btn: MouseButton) -> u8 {
+    match btn {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
+}
+
+fn mouse_mods(m: KeyModifiers) -> u8 {
+    let mut b = 0;
+    if m.contains(KeyModifiers::SHIFT) {
+        b += 4;
+    }
+    if m.contains(KeyModifiers::ALT) {
+        b += 8;
+    }
+    if m.contains(KeyModifiers::CONTROL) {
+        b += 16;
+    }
+    b
+}
+
+fn sgr_mouse(button: u8, col: usize, row: usize, pressed: bool) -> Vec<u8> {
+    let f = if pressed { 'M' } else { 'm' };
+    format!("\x1b[<{button};{col};{row}{f}").into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sgr_encodes_press_and_release() {
+        assert_eq!(sgr_mouse(0, 1, 3, true), b"\x1b[<0;1;3M".to_vec());
+        assert_eq!(sgr_mouse(0, 1, 3, false), b"\x1b[<0;1;3m".to_vec());
+        assert_eq!(sgr_mouse(64, 5, 9, true), b"\x1b[<64;5;9M".to_vec());
+    }
+
+    #[test]
+    fn button_and_modifier_codes_match_xterm() {
+        assert_eq!(btn_base(MouseButton::Left), 0);
+        assert_eq!(btn_base(MouseButton::Middle), 1);
+        assert_eq!(btn_base(MouseButton::Right), 2);
+        assert_eq!(mouse_mods(KeyModifiers::NONE), 0);
+        assert_eq!(mouse_mods(KeyModifiers::SHIFT), 4);
+        assert_eq!(mouse_mods(KeyModifiers::ALT), 8);
+        assert_eq!(mouse_mods(KeyModifiers::CONTROL), 16);
+        assert_eq!(
+            mouse_mods(KeyModifiers::SHIFT | KeyModifiers::CONTROL),
+            20
+        );
     }
 }

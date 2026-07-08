@@ -5,12 +5,21 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
+use twit_term::alacritty_terminal::grid::Scroll;
+use twit_term::alacritty_terminal::term::TermMode;
 use twit_term::alacritty_terminal::term::cell::Flags;
 use twit_term::alacritty_terminal::vte::ansi::CursorShape;
 use twit_term::{ColorSlot, TermBackend, color_slot};
 
 pub struct EditorTerm {
     pub be: TermBackend,
+}
+
+#[derive(Clone, Copy)]
+pub struct MouseFlags {
+    pub report: bool,
+    pub drag: bool,
+    pub motion: bool,
 }
 
 fn to_color(slot: ColorSlot) -> Option<Color> {
@@ -40,6 +49,25 @@ impl EditorTerm {
     pub fn feed_key(&mut self, ev: &KeyEvent) {
         if let Some(bytes) = key_to_bytes(ev) {
             self.be.feed(&bytes);
+        }
+    }
+
+    pub fn feed(&mut self, bytes: &[u8]) {
+        self.be.feed(bytes);
+    }
+
+    pub fn scroll_lines(&mut self, steps: i32) {
+        self.be.term.scroll_display(Scroll::Delta(steps));
+    }
+
+    pub fn mouse_flags(&self) -> MouseFlags {
+        let mode = self.be.term.mode();
+        MouseFlags {
+            report: mode.intersects(
+                TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION,
+            ),
+            drag: mode.contains(TermMode::MOUSE_DRAG),
+            motion: mode.contains(TermMode::MOUSE_MOTION),
         }
     }
 
