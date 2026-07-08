@@ -127,6 +127,7 @@ Press `?` in any pane (outside a text field or the terminal) to pop up a cheat-s
 | `i` | `graph-rebase-interactive` | Interactively rebase onto the commit |
 | `R` | `graph-reset` | Reset the current branch to the commit |
 | `V` | `graph-revert` | Revert the commit |
+| `M` | `graph-merge` | Merge the commit / branch into the current branch |
 | `B` | `graph-rebase-onto` | Rebase the current branch onto the commit |
 | `p` | `graph-push` | Push the current branch |
 | `f` | `graph-fetch` | Fetch from the remote |

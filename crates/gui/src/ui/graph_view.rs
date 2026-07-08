@@ -55,6 +55,7 @@ pub enum GraphAction {
     Amend,
     CherryPick(Oid),
     Revert(Oid),
+    Merge(Oid),
     Switch(String),
     CheckoutRemote(String),
     DeleteRemoteBranch(String),
@@ -535,6 +536,10 @@ fn build_menu_entries(
     entries.push((
         "\u{f0e2}  Revert this commit".to_string(),
         GraphAction::Revert(oid),
+    ));
+    entries.push((
+        "\u{e727}  Merge into current branch".to_string(),
+        GraphAction::Merge(oid),
     ));
     entries.push((
         "\u{e728}  Rebase current branch onto this".to_string(),

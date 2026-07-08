@@ -42,6 +42,7 @@ pub enum DeleteTarget {
 pub enum GraphOp {
     CherryPick,
     Revert,
+    Merge,
     RebaseOnto,
     Checkout,
 }
@@ -51,6 +52,7 @@ impl GraphOp {
         match self {
             GraphOp::CherryPick => "Cherry-pick commit",
             GraphOp::Revert => "Revert commit",
+            GraphOp::Merge => "Merge into current branch",
             GraphOp::RebaseOnto => "Rebase onto commit",
             GraphOp::Checkout => "Check out commit",
         }
@@ -64,6 +66,7 @@ impl GraphOp {
             GraphOp::Revert => {
                 "Create a new commit on the current branch that undoes this commit's changes."
             }
+            GraphOp::Merge => "Merge this commit into the current branch, creating a merge commit.",
             GraphOp::RebaseOnto => {
                 "Replay the current branch onto this commit. This rewrites the branch's commits."
             }
@@ -135,6 +138,28 @@ impl App {
     pub fn revert(&mut self, oid: Oid) {
         let r = repo::revert(&self.selected, oid);
         self.apply_seq_outcome(SeqKind::Revert, r, "revert");
+    }
+
+    pub fn merge(&mut self, oid: Oid) {
+        let label = self.merge_label(oid);
+        let r = repo::merge(&self.selected, oid, &label);
+        self.apply_seq_outcome(SeqKind::Merge, r, "merge");
+    }
+
+    fn merge_label(&self, oid: Oid) -> String {
+        use repo::RefKind;
+        if let Some(row) = self.graph.rows.iter().find(|r| r.id == oid) {
+            for r in &row.refs {
+                match r.kind {
+                    RefKind::LocalBranch if !r.is_head => return format!("branch '{}'", r.name),
+                    RefKind::RemoteBranch => return format!("remote-tracking branch '{}'", r.name),
+                    RefKind::Tag => return format!("tag '{}'", r.name),
+                    _ => {}
+                }
+            }
+        }
+        let short = oid.to_string();
+        format!("commit '{}'", &short[..7.min(short.len())])
     }
 
     pub fn seq_continue(&mut self) {
@@ -260,6 +285,7 @@ impl App {
         match op {
             GraphOp::CherryPick => self.cherry_pick(oid),
             GraphOp::Revert => self.revert(oid),
+            GraphOp::Merge => self.merge(oid),
             GraphOp::RebaseOnto => self.rebase_onto(oid),
             GraphOp::Checkout => self.checkout_commit(oid),
         }

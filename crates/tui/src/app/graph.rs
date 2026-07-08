@@ -203,6 +203,7 @@ impl TuiApp {
                         | Action::GraphCreateTag
                         | Action::GraphCherryPick
                         | Action::GraphRevert
+                        | Action::GraphMerge
                         | Action::GraphRebaseOnto
                         | Action::GraphRebaseInteractive
                         | Action::GraphCheckout
@@ -241,6 +242,7 @@ impl TuiApp {
                 Action::GraphCreateTag => self.graph_op_prompt(a),
                 Action::GraphCherryPick => self.graph_op_prompt(a),
                 Action::GraphRevert => self.graph_op_prompt(a),
+                Action::GraphMerge => self.graph_op_prompt(a),
                 Action::GraphRebaseOnto => self.graph_op_prompt(a),
                 Action::GraphCheckout => self.graph_op_prompt(a),
                 Action::GraphRenameBranch => self.graph_op_prompt(a),

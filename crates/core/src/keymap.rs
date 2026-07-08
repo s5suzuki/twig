@@ -291,6 +291,7 @@ pub enum Action {
     GraphCreateTag,
     GraphCherryPick,
     GraphRevert,
+    GraphMerge,
     GraphRebaseOnto,
     GraphRebaseInteractive,
     GraphCheckout,
@@ -560,6 +561,11 @@ impl Action {
             "Cherry-pick the commit",
         ),
         (Action::GraphRevert, "graph-revert", "Revert the commit"),
+        (
+            Action::GraphMerge,
+            "graph-merge",
+            "Merge the commit / branch into the current branch",
+        ),
         (
             Action::GraphRebaseOnto,
             "graph-rebase-onto",
@@ -862,6 +868,7 @@ impl Keymap {
         km.push(Graph, n, T, GraphCreateTag);
         km.push(Graph, n, Y, GraphCherryPick);
         km.push(Graph, shift, V, GraphRevert);
+        km.push(Graph, shift, M, GraphMerge);
         km.push(Graph, shift, B, GraphRebaseOnto);
         km.push(Graph, n, I, GraphRebaseInteractive);
         km.push(Graph, n, O, GraphCheckout);

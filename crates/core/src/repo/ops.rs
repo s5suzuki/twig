@@ -301,6 +301,39 @@ pub fn merge_abort(repo_path: &Path) -> Result<(), git2::Error> {
     reset_hard_to_head(repo_path)
 }
 
+pub fn merge(repo_path: &Path, oid: Oid, label: &str) -> Result<SeqOutcome, git2::Error> {
+    let repo = Repository::open(repo_path)?;
+    let annotated = repo.find_annotated_commit(oid)?;
+    let analysis = repo.merge_analysis(&[&annotated])?.0;
+
+    if analysis.is_up_to_date() {
+        return Ok(SeqOutcome::Done);
+    }
+
+    if analysis.is_fast_forward() {
+        let obj = repo.find_object(oid, None)?;
+        repo.checkout_tree(&obj, Some(git2::build::CheckoutBuilder::new().safe()))?;
+        let refname = repo.head()?.name().map(String::from)?;
+        repo.find_reference(&refname)?
+            .set_target(oid, "merge: fast-forward")?;
+        return Ok(SeqOutcome::Done);
+    }
+
+    repo.merge(&[&annotated], None, None)?;
+    let mut index = repo.index()?;
+    if index.has_conflicts() {
+        return Ok(SeqOutcome::Conflicts(conflict_paths(&index)));
+    }
+    let tree = repo.find_tree(index.write_tree()?)?;
+    let head = repo.head()?.peel_to_commit()?;
+    let their = repo.find_commit(oid)?;
+    let sig = repo.signature()?;
+    let msg = format!("Merge {label}");
+    repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &[&head, &their])?;
+    repo.cleanup_state()?;
+    Ok(SeqOutcome::Done)
+}
+
 fn finish_cherry_pick(repo: &Repository, picked: &git2::Commit) -> Result<SeqOutcome, git2::Error> {
     let mut index = repo.index()?;
     if index.has_conflicts() {

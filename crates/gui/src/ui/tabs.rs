@@ -126,6 +126,7 @@ fn apply_graph_action(app: &mut App, ctx: &egui::Context, action: graph_view::Gr
         GraphAction::Amend => app.begin_amend_from_graph(),
         GraphAction::CherryPick(oid) => app.confirm_op = Some((GraphOp::CherryPick, oid)),
         GraphAction::Revert(oid) => app.confirm_op = Some((GraphOp::Revert, oid)),
+        GraphAction::Merge(oid) => app.confirm_op = Some((GraphOp::Merge, oid)),
         GraphAction::Switch(name) => app.switch_branch(name),
         GraphAction::CheckoutRemote(name) => app.checkout_tracking(name),
         GraphAction::DeleteRemoteBranch(name) => {

@@ -4,6 +4,7 @@ use super::*;
 pub enum GraphOp {
     CherryPick,
     Revert,
+    Merge,
     RebaseOnto,
     CheckoutDetached,
 }
@@ -13,6 +14,7 @@ impl GraphOp {
         match self {
             GraphOp::CherryPick => format!("Cherry-pick {short} onto HEAD? (y/n)"),
             GraphOp::Revert => format!("Revert {short}? (y/n)"),
+            GraphOp::Merge => format!("Merge {short} into current branch? (y/n)"),
             GraphOp::RebaseOnto => format!("Rebase current branch onto {short}? (y/n)"),
             GraphOp::CheckoutDetached => format!("Check out {short} (detached HEAD)? (y/n)"),
         }
@@ -77,6 +79,21 @@ impl TuiApp {
         self.refresh();
     }
 
+    pub(super) fn merge_label(&self, oid: Oid) -> String {
+        use twit_core::repo::RefKind;
+        if let Some(row) = self.graph.rows.iter().find(|r| r.id == oid) {
+            for r in &row.refs {
+                match r.kind {
+                    RefKind::LocalBranch if !r.is_head => return format!("branch '{}'", r.name),
+                    RefKind::RemoteBranch => return format!("remote-tracking branch '{}'", r.name),
+                    RefKind::Tag => return format!("tag '{}'", r.name),
+                    _ => {}
+                }
+            }
+        }
+        format!("commit '{}'", short_oid(&oid))
+    }
+
     pub(super) fn run_reset(&mut self, oid: Oid, mode: repo::ResetMode) {
         match repo::reset(&self.selected, oid, mode) {
             Ok(()) => self.error = None,
@@ -94,6 +111,11 @@ impl TuiApp {
             GraphOp::Revert => {
                 let r = repo::revert(&self.selected, oid);
                 self.apply_seq_outcome("revert", r);
+            }
+            GraphOp::Merge => {
+                let label = self.merge_label(oid);
+                let r = repo::merge(&self.selected, oid, &label);
+                self.apply_seq_outcome("merge", r);
             }
             GraphOp::RebaseOnto => {
                 let r = repo::rebase_onto(&self.selected, oid);
@@ -237,6 +259,7 @@ impl TuiApp {
             Action::GraphCreateTag => (Prompt::CreateTag { at: oid }, String::new()),
             Action::GraphCherryPick => confirm_op(GraphOp::CherryPick),
             Action::GraphRevert => confirm_op(GraphOp::Revert),
+            Action::GraphMerge => confirm_op(GraphOp::Merge),
             Action::GraphRebaseOnto => confirm_op(GraphOp::RebaseOnto),
             Action::GraphCheckout => {
                 let refs: Vec<RefTarget> = self
