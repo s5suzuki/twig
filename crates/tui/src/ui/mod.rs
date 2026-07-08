@@ -15,6 +15,7 @@ use crate::app::{ChangesItem, Pane, Tab, TuiApp, View, ViewMode};
 pub const FOCUS_FG: Color = Color::Cyan;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
+    app.editor_cursor_shape = None;
     let mut area = frame.area();
     if app.seq.is_some() {
         let parts = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
@@ -415,5 +416,9 @@ fn draw_editor(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let focused = app.focus == Pane::RightTab;
     let term = app.term.as_mut().unwrap();
     term.pump();
-    term.draw(frame.buffer_mut(), area, focused);
+    let cursor = term.draw(frame.buffer_mut(), area, focused);
+    if let Some((x, y, style)) = cursor {
+        frame.set_cursor_position((x, y));
+        app.editor_cursor_shape = Some(style);
+    }
 }

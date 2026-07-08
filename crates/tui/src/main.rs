@@ -8,6 +8,7 @@ use twit_core::watch::WorktreeWatcher;
 
 use twit::app::{Tab, TuiApp, View, ViewMode};
 use twit::session::{self, Session};
+use twit::term::CursorStyle;
 use twit::{clipboard, ui, zellij};
 
 struct Args {
@@ -154,6 +155,7 @@ fn main() {
     if kb_enhanced {
         pop_kb_enhancement();
     }
+    apply_cursor_style(None, &mut Some(CursorStyle::Block));
     set_mouse_capture(false);
     ratatui::restore();
     let broadcast = app.quit_broadcast;
@@ -183,6 +185,21 @@ fn push_kb_enhancement() {
 fn pop_kb_enhancement() {
     use ratatui::crossterm::event::PopKeyboardEnhancementFlags;
     let _ = ratatui::crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+}
+
+fn apply_cursor_style(desired: Option<CursorStyle>, last: &mut Option<CursorStyle>) {
+    use ratatui::crossterm::cursor::SetCursorStyle;
+    if desired == *last {
+        return;
+    }
+    *last = desired;
+    let style = match desired {
+        Some(CursorStyle::Block) => SetCursorStyle::SteadyBlock,
+        Some(CursorStyle::Bar) => SetCursorStyle::SteadyBar,
+        Some(CursorStyle::Underline) => SetCursorStyle::SteadyUnderScore,
+        None => SetCursorStyle::DefaultUserShape,
+    };
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), style);
 }
 
 fn set_mouse_capture(on: bool) {
@@ -282,6 +299,8 @@ fn run(
     kb_enhanced: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     terminal.draw(|frame| ui::draw(frame, app))?;
+    let mut cursor_style: Option<CursorStyle> = None;
+    apply_cursor_style(app.editor_cursor_shape, &mut cursor_style);
 
     struct Shrink {
         target: u16,
@@ -399,10 +418,12 @@ fn run(
         }
         if let Some(argv) = app.pending_shell.take() {
             run_suspended(terminal, app, &argv, kb_enhanced, &mut mouse_on)?;
+            cursor_style = None;
             dirty = true;
         }
         if let Some((file, line)) = app.pending_editor.take() {
             open_editor(terminal, app, &file, line, kb_enhanced, &mut mouse_on)?;
+            cursor_style = None;
             dirty = true;
         }
         if app.quit {
@@ -411,6 +432,7 @@ fn run(
         app.track_nav();
         if dirty {
             terminal.draw(|frame| ui::draw(frame, app))?;
+            apply_cursor_style(app.editor_cursor_shape, &mut cursor_style);
         }
     }
 }

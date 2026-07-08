@@ -22,6 +22,21 @@ pub struct MouseFlags {
     pub motion: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CursorStyle {
+    Block,
+    Bar,
+    Underline,
+}
+
+fn cursor_style(shape: CursorShape) -> CursorStyle {
+    match shape {
+        CursorShape::Beam => CursorStyle::Bar,
+        CursorShape::Underline => CursorStyle::Underline,
+        _ => CursorStyle::Block,
+    }
+}
+
 fn to_color(slot: ColorSlot) -> Option<Color> {
     match slot {
         ColorSlot::Default => None,
@@ -71,7 +86,12 @@ impl EditorTerm {
         }
     }
 
-    pub fn draw(&mut self, buf: &mut Buffer, area: Rect, focused: bool) {
+    pub fn draw(
+        &mut self,
+        buf: &mut Buffer,
+        area: Rect,
+        focused: bool,
+    ) -> Option<(u16, u16, CursorStyle)> {
         let cols = (area.width as usize).max(1);
         let rows = (area.height as usize).max(1);
         if cols != self.be.cols() || rows != self.be.rows() {
@@ -124,19 +144,23 @@ impl EditorTerm {
 
         let cur = content.cursor;
         let cursor_row = cur.point.line.0 + off;
-        if focused
-            && cur.shape != CursorShape::Hidden
-            && cursor_row >= 0
-            && (cursor_row as usize) < rows
-            && cur.point.column.0 < cols
+        if cur.shape == CursorShape::Hidden
+            || cursor_row < 0
+            || (cursor_row as usize) >= rows
+            || cur.point.column.0 >= cols
         {
-            let x = area.x + cur.point.column.0 as u16;
-            let y = area.y + cursor_row as u16;
-            if let Some(slot) = buf.cell_mut((x, y)) {
-                let style = slot.style().add_modifier(Modifier::REVERSED);
-                slot.set_style(style);
-            }
+            return None;
         }
+        let x = area.x + cur.point.column.0 as u16;
+        let y = area.y + cursor_row as u16;
+        if focused {
+            return Some((x, y, cursor_style(cur.shape)));
+        }
+        if let Some(slot) = buf.cell_mut((x, y)) {
+            let style = slot.style().add_modifier(Modifier::REVERSED);
+            slot.set_style(style);
+        }
+        None
     }
 }
 
