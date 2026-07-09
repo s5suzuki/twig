@@ -331,3 +331,78 @@ fn open_in_embedded_spawns_nvim_and_opens_the_file() {
 
     cleanup(app, &[&dir]);
 }
+
+#[test]
+fn kitty_terminal_sends_tab_to_nvim_and_cycles_on_ctrl_tab() {
+    if !has_nvim() {
+        return;
+    }
+    isolate_xdg();
+    let dir = temp_repo();
+    std::fs::write(dir.join("hello.txt"), "line\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.kb_enhanced = true;
+    let file = dir.join("hello.txt");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        assert!(app.open_in_embedded(&file, None));
+        if let Some(t) = app.term.as_mut() {
+            t.pump();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        if screen(&mut app, 120, 35).iter().any(|l| l.contains("line")) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "file never opened");
+    }
+
+    app.handle_input(vec![key(KeyCode::Char('g')), key(KeyCode::Char('g'))]);
+    app.handle_input(vec![key(KeyCode::Char('O'))]);
+    std::thread::sleep(Duration::from_millis(200));
+    for c in "aaa".chars() {
+        app.handle_input(vec![key(KeyCode::Char(c))]);
+    }
+    app.handle_input(vec![key(KeyCode::Tab)]);
+    assert_eq!(
+        app.active_tab,
+        Tab::Editor,
+        "plain tab does not cycle out of the editor"
+    );
+    for c in "zzz".chars() {
+        app.handle_input(vec![key(KeyCode::Char(c))]);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    app.handle_input(vec![key(KeyCode::Esc)]);
+
+    let lines = wait_for(&mut app, "zzz", 10);
+    let typed = lines
+        .iter()
+        .find(|l| l.contains("aaa") && l.contains("zzz"))
+        .unwrap_or_else(|| panic!("typed line missing:\n{}", lines.join("\n")));
+    let gap = typed
+        .split("aaa")
+        .nth(1)
+        .unwrap()
+        .split("zzz")
+        .next()
+        .unwrap();
+    assert!(
+        gap.len() >= 4 && gap.trim().is_empty(),
+        "tab reached nvim and widened the line, gap={gap:?} in {typed:?}"
+    );
+
+    let ctrl_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL);
+    app.handle_input(vec![ctrl_tab]);
+    assert_eq!(app.active_tab, Tab::Graph, "ctrl+tab cycles out");
+
+    app.focus = Pane::RightTab;
+    app.active_tab = Tab::Editor;
+    let ctrl_shift_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    app.handle_input(vec![ctrl_shift_tab]);
+    assert_eq!(app.active_tab, Tab::Search, "ctrl+shift+tab cycles back");
+
+    cleanup(app, &[&dir]);
+}

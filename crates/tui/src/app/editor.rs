@@ -145,9 +145,15 @@ impl TuiApp {
         match ev.code {
             KeyCode::Char('h') if alt => return self.focus_move(-1),
             KeyCode::Char('l') if alt => return self.focus_move(1),
-            KeyCode::Tab => return self.cycle_tab(1),
-            KeyCode::BackTab => return self.cycle_tab(-1),
             _ => {}
+        }
+        if let Some(step) = cycle_step(
+            &self.keymap,
+            &mut self.pending_prefix,
+            self.kb_enhanced,
+            &ev,
+        ) {
+            return self.cycle_tab(step);
         }
         if let Some(t) = self.term.as_mut() {
             t.feed_key(&ev);
@@ -226,6 +232,29 @@ fn mouse_mods(m: KeyModifiers) -> u8 {
     b
 }
 
+pub(super) fn cycle_step(
+    keymap: &Keymap,
+    pending: &mut Option<Chord>,
+    kb_enhanced: bool,
+    ev: &KeyEvent,
+) -> Option<isize> {
+    let escapes = KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER;
+    if kb_enhanced && !ev.modifiers.intersects(escapes) {
+        return None;
+    }
+    let mut queue = KeyQueue(crate::keys::normalize(ev).into_iter().collect());
+    let actions = keymap.resolve(&mut queue, Context::Global, pending, |a| {
+        matches!(
+            a,
+            Action::CycleTab | Action::CycleTabFwd | Action::CycleTabBack
+        )
+    });
+    match actions.first()? {
+        Action::CycleTabBack => Some(-1),
+        _ => Some(1),
+    }
+}
+
 fn sgr_mouse(button: u8, col: usize, row: usize, pressed: bool) -> Vec<u8> {
     let f = if pressed { 'M' } else { 'm' };
     format!("\x1b[<{button};{col};{row}{f}").into_bytes()
@@ -240,6 +269,45 @@ mod tests {
         assert_eq!(sgr_mouse(0, 1, 3, true), b"\x1b[<0;1;3M".to_vec());
         assert_eq!(sgr_mouse(0, 1, 3, false), b"\x1b[<0;1;3m".to_vec());
         assert_eq!(sgr_mouse(64, 5, 9, true), b"\x1b[<64;5;9M".to_vec());
+    }
+
+    fn step(kb_enhanced: bool, code: KeyCode, mods: KeyModifiers) -> Option<isize> {
+        let keymap = Keymap::default();
+        let mut pending = None;
+        cycle_step(
+            &keymap,
+            &mut pending,
+            kb_enhanced,
+            &KeyEvent::new(code, mods),
+        )
+    }
+
+    #[test]
+    fn kitty_terminal_passes_tab_to_nvim_and_cycles_on_ctrl_tab() {
+        const CTRL: KeyModifiers = KeyModifiers::CONTROL;
+        const SHIFT: KeyModifiers = KeyModifiers::SHIFT;
+        assert_eq!(step(true, KeyCode::Tab, KeyModifiers::NONE), None);
+        assert_eq!(step(true, KeyCode::Tab, SHIFT), None);
+        assert_eq!(step(true, KeyCode::BackTab, SHIFT), None);
+        assert_eq!(step(true, KeyCode::Tab, CTRL), Some(1));
+        assert_eq!(step(true, KeyCode::Tab, CTRL | SHIFT), Some(-1));
+    }
+
+    #[test]
+    fn plain_terminal_keeps_tab_as_the_escape_hatch() {
+        assert_eq!(step(false, KeyCode::Tab, KeyModifiers::NONE), Some(1));
+        assert_eq!(step(false, KeyCode::BackTab, KeyModifiers::SHIFT), Some(-1));
+    }
+
+    #[test]
+    fn nvim_keys_are_never_swallowed_as_tab_cycles() {
+        for kb in [true, false] {
+            for code in [KeyCode::Char('o'), KeyCode::Char('i'), KeyCode::Char('w')] {
+                assert_eq!(step(kb, code, KeyModifiers::CONTROL), None);
+            }
+            assert_eq!(step(kb, KeyCode::Char('a'), KeyModifiers::NONE), None);
+            assert_eq!(step(kb, KeyCode::Esc, KeyModifiers::NONE), None);
+        }
     }
 
     #[test]

@@ -110,6 +110,7 @@ pub struct TuiApp {
     pub quit_broadcast: bool,
     pub keymap: Keymap,
     pub pending_prefix: Option<Chord>,
+    pub kb_enhanced: bool,
     pub error: Option<String>,
     pub quit: bool,
 
@@ -209,6 +210,7 @@ impl TuiApp {
             quit_broadcast: false,
             keymap: Keymap::from_config(&config.keys),
             pending_prefix: None,
+            kb_enhanced: false,
             error: None,
             quit: false,
             config,

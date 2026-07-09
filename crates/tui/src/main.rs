@@ -141,6 +141,7 @@ fn main() {
 
     let mut terminal = ratatui::init();
     let kb_enhanced = kb_enhancement_supported();
+    app.kb_enhanced = kb_enhanced;
     if kb_enhanced {
         push_kb_enhancement();
     }

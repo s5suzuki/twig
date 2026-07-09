@@ -196,6 +196,9 @@ pub fn key_to_bytes(ev: &KeyEvent) -> Option<Vec<u8>> {
         KeyCode::Enter => out.push(b'\r'),
         KeyCode::Backspace => out.push(0x7f),
         KeyCode::Esc => out.push(0x1b),
+        KeyCode::Tab if ev.modifiers.contains(KeyModifiers::SHIFT) => {
+            out.extend_from_slice(b"\x1b[Z")
+        }
         KeyCode::Tab => out.push(b'\t'),
         KeyCode::BackTab => out.extend_from_slice(b"\x1b[Z"),
         KeyCode::Up => out.extend_from_slice(b"\x1b[A"),
@@ -265,6 +268,14 @@ mod tests {
         assert_eq!(
             key_to_bytes(&press(KeyCode::Tab, KeyModifiers::NONE)),
             Some(b"\t".to_vec())
+        );
+        assert_eq!(
+            key_to_bytes(&press(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            Some(b"\x1b[Z".to_vec())
+        );
+        assert_eq!(
+            key_to_bytes(&press(KeyCode::Tab, KeyModifiers::SHIFT)),
+            Some(b"\x1b[Z".to_vec())
         );
         let mut rel = press(KeyCode::Char('a'), KeyModifiers::NONE);
         rel.kind = KeyEventKind::Release;

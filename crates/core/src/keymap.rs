@@ -786,6 +786,7 @@ impl Keymap {
         km.push(Global, n, Tab, CycleTabFwd);
         km.push(Global, shift, Tab, CycleTabBack);
         km.push(Global, ctrl, Tab, CycleTab);
+        km.push(Global, ctrl.plus(shift), Tab, CycleTabBack);
         km.push(Global, ctrl, Backtick, ToggleShell);
         km.push(Global, ctrl.plus(shift), F, OpenSearch);
         km.push(Global, ctrl, O, NavBack);
