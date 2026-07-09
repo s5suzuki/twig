@@ -1369,3 +1369,39 @@ fn graph_expands_uncommitted_node_and_opens_file_diff() {
     let row = find_line(&lines, "second").expect("per-file diff rendered");
     assert!(row.contains("first"), "old content on the left: {row}");
 }
+
+#[test]
+fn renamed_file_stages_and_unstages_in_one_toggle() {
+    let dir = temp_repo();
+    std::fs::write(dir.join("old.txt"), "hello\nworld\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    std::fs::rename(dir.join("old.txt"), dir.join("new.txt")).unwrap();
+
+    let mut app = TuiApp::new(&dir).unwrap();
+    app.handle_input(vec![
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char('j')),
+        key(KeyCode::Char(' ')),
+    ]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "Changes (0)").is_some(),
+        "nothing left unstaged"
+    );
+    assert!(
+        find_line(&lines, "Staged (1)").is_some(),
+        "one staged entry"
+    );
+
+    app.handle_input(vec![key(KeyCode::Char('k')), key(KeyCode::Char(' '))]);
+    let lines = screen(&mut app, 140, 30);
+    assert!(
+        find_line(&lines, "Staged (0)").is_some(),
+        "nothing left staged"
+    );
+    assert!(
+        find_line(&lines, "Changes (1)").is_some(),
+        "one unstaged entry"
+    );
+}

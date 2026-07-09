@@ -223,14 +223,15 @@ impl TuiApp {
                 },
                 Action::ChangesStageToggle => match item {
                     Some(ChangesItem::File { path, staged, .. }) => {
-                        self.stage_paths(staged, vec![path])
+                        let paths = self.file_paths(staged, &path);
+                        self.stage_paths(staged, paths);
                     }
                     Some(ChangesItem::Folder { path, staged, .. }) => {
-                        let paths = self.side_paths(staged, Some(&path));
+                        let paths = self.side_stage_paths(staged, Some(&path));
                         self.stage_paths(staged, paths);
                     }
                     Some(ChangesItem::Group { staged }) => {
-                        let paths = self.side_paths(staged, None);
+                        let paths = self.side_stage_paths(staged, None);
                         self.stage_paths(staged, paths);
                     }
                     Some(ChangesItem::Stash(index)) => {
@@ -289,6 +290,25 @@ impl TuiApp {
             .collect()
     }
 
+    pub(super) fn file_paths(&self, staged: bool, path: &str) -> Vec<String> {
+        let entries = if staged { &self.staged } else { &self.unstaged };
+        match entries
+            .iter()
+            .find(|e| e.path == path)
+            .and_then(|e| e.old_path.as_deref())
+        {
+            Some(old) if old != path => vec![old.to_string(), path.to_string()],
+            _ => vec![path.to_string()],
+        }
+    }
+
+    pub(super) fn side_stage_paths(&self, staged: bool, folder: Option<&str>) -> Vec<String> {
+        self.side_paths(staged, folder)
+            .iter()
+            .flat_map(|p| self.file_paths(staged, p))
+            .collect()
+    }
+
     pub(super) fn changes_discard(&mut self, item: Option<ChangesItem>) {
         let folder = match item {
             Some(ChangesItem::File {
@@ -296,15 +316,7 @@ impl TuiApp {
                 staged: false,
                 ..
             }) => {
-                let mut paths = vec![path.clone()];
-                if let Some(old) = self
-                    .unstaged
-                    .iter()
-                    .find(|e| e.path == path)
-                    .and_then(|e| e.old_path.clone())
-                {
-                    paths.push(old);
-                }
+                let paths = self.file_paths(false, &path);
                 if !self.config.confirm_discard {
                     self.run_discard_files(&paths);
                     return;
