@@ -17,7 +17,7 @@ pub struct SharedState {
     pub quit: bool,
     pub panes: BTreeMap<String, u32>,
     #[serde(default)]
-    pub zellij_panes: BTreeMap<String, String>,
+    pub mux_panes: BTreeMap<String, String>,
     #[serde(default)]
     pub extra_panes: Vec<String>,
     #[serde(default)]
@@ -39,7 +39,7 @@ impl SharedState {
             active_tab: Tab::Graph,
             quit: false,
             panes: BTreeMap::new(),
-            zellij_panes: BTreeMap::new(),
+            mux_panes: BTreeMap::new(),
             extra_panes: Vec::new(),
             editor_file: None,
             editor_line: None,
@@ -121,7 +121,7 @@ pub struct Session {
     view: String,
     pid: u32,
     repo: PathBuf,
-    zellij_pane: Option<String>,
+    mux_pane: Option<String>,
     last_gen: u64,
 }
 
@@ -131,7 +131,7 @@ impl Session {
         view: &str,
         pid: u32,
         repo: &Path,
-        zellij_pane: Option<String>,
+        mux_pane: Option<String>,
     ) -> Result<Self, String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("session dir: {e}"))?;
         let sess = Self {
@@ -139,7 +139,7 @@ impl Session {
             view: view.to_string(),
             pid,
             repo: repo.to_path_buf(),
-            zellij_pane,
+            mux_pane,
             last_gen: 0,
         };
         let lock = sess.lock();
@@ -149,17 +149,15 @@ impl Session {
             .unwrap_or_else(|| SharedState::new(repo));
         state.panes.retain(|_, p| pid_alive(*p));
         state.panes.insert(view.to_string(), pid);
-        match &sess.zellij_pane {
+        match &sess.mux_pane {
             Some(id) => {
-                state.zellij_panes.insert(view.to_string(), id.clone());
+                state.mux_panes.insert(view.to_string(), id.clone());
             }
             None => {
-                state.zellij_panes.remove(view);
+                state.mux_panes.remove(view);
             }
         }
-        state
-            .zellij_panes
-            .retain(|v, _| state.panes.contains_key(v));
+        state.mux_panes.retain(|v, _| state.panes.contains_key(v));
         state.generation += 1;
         let written = sess.write(&state);
         drop(lock);
@@ -183,8 +181,8 @@ impl Session {
 
     pub fn editor_target_pane(&self) -> Option<String> {
         let state = self.read()?;
-        let target = state.zellij_panes.get("main")?;
-        if Some(target) == self.zellij_pane.as_ref() {
+        let target = state.mux_panes.get("main")?;
+        if Some(target) == self.mux_pane.as_ref() {
             return None;
         }
         Some(target.clone())
@@ -193,10 +191,10 @@ impl Session {
     pub fn diff_target_pane(&self) -> Option<String> {
         let state = self.read()?;
         let target = state
-            .zellij_panes
+            .mux_panes
             .get("diff")
-            .or_else(|| state.zellij_panes.get("main"))?;
-        if Some(target) == self.zellij_pane.as_ref() {
+            .or_else(|| state.mux_panes.get("main"))?;
+        if Some(target) == self.mux_pane.as_ref() {
             return None;
         }
         Some(target.clone())
@@ -258,9 +256,7 @@ impl Session {
         };
         state.panes.remove(&self.view);
         state.panes.retain(|_, p| pid_alive(*p));
-        state
-            .zellij_panes
-            .retain(|v, _| state.panes.contains_key(v));
+        state.mux_panes.retain(|v, _| state.panes.contains_key(v));
         if state.panes.is_empty() {
             let _ = std::fs::remove_dir_all(&self.dir);
             return state.extra_panes;
@@ -376,7 +372,7 @@ mod tests {
         }
         assert!(
             !me.tick().quit,
-            "a dead sibling pane must not quit the others; pane lifecycle is Zellij's job"
+            "a dead sibling pane must not quit the others; pane lifecycle is the multiplexer's job"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

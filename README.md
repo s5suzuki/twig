@@ -37,16 +37,16 @@ Then:
 
 ```sh
 twig <repo path>   # GUI
-twit <repo path>   # TUI (under Zellij, splits the current tab into panes)
+twit <repo path>   # TUI (under Zellij or herdr, splits the current tab into panes)
 ```
 
-## Under Zellij
+## Under Zellij or herdr
 
-Inside Zellij, `twit` splits the current tab into panes (sidebar, changes, main, and a terminal below main) instead of one integrated window.
+Inside a supported multiplexer (Zellij or [herdr](https://herdr.dev)), `twit` splits the current tab into panes (sidebar, changes, main, and a terminal below main) instead of one integrated window. The multiplexer is auto-detected at startup.
 
 ```sh
 twit --new-tab <repo path>   # expand the split into a new tab
-twit --single <repo path>    # force one integrated window even under Zellij
+twit --single <repo path>    # force one integrated window even under a multiplexer
 ```
 
 ## Configuration

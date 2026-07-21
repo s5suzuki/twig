@@ -9,7 +9,7 @@ use twit_core::watch::WorktreeWatcher;
 use twit::app::{Tab, TuiApp, View, ViewMode};
 use twit::session::{self, Session};
 use twit::term::CursorStyle;
-use twit::{clipboard, ui, zellij};
+use twit::{clipboard, mux, ui};
 
 struct Args {
     repo: String,
@@ -83,23 +83,24 @@ fn main() {
     let mut view = args.view;
     let mut session_token = args.session;
     let mut cols = args.cols;
-    if view.is_none() && !args.single && zellij::inside_zellij() {
+    if view.is_none()
+        && !args.single
+        && let Some(mux) = mux::active()
+    {
         if args.new_tab {
-            match zellij::spawn_tab(&path) {
+            match mux.spawn_tab(&path) {
                 Ok(()) => return,
-                Err(e) => eprintln!("twit: zellij split failed ({e}); running single window"),
+                Err(e) => eprintln!("twit: split failed ({e}); running single window"),
             }
         } else {
             let token = session::pid_token();
-            match zellij::split_current_tab(&path, &token) {
-                Ok(()) => {
+            match mux.split_current_tab(&path, &token) {
+                Ok(plan) => {
                     view = Some(View::Sidebar);
                     session_token = Some(token);
-                    cols = Some(26);
+                    cols = plan.self_resize_cols;
                 }
-                Err(e) => {
-                    eprintln!("twit: zellij split failed ({e}); running single window")
-                }
+                Err(e) => eprintln!("twit: split failed ({e}); running single window"),
             }
         }
     }
@@ -115,10 +116,8 @@ fn main() {
     if let ViewMode::Single(view) = view_mode {
         let token = session_token.unwrap_or_else(|| session::repo_token(&path));
         let dir = session::session_dir(&token);
-        let zellij_pane = std::env::var("ZELLIJ_PANE_ID")
-            .ok()
-            .filter(|v| !v.is_empty());
-        match Session::join(&dir, view.name(), std::process::id(), &path, zellij_pane) {
+        let mux_pane = mux::current_pane_id();
+        match Session::join(&dir, view.name(), std::process::id(), &path, mux_pane) {
             Ok(s) => app.session = Some(s),
             Err(e) => app.error = Some(format!("session: {e}")),
         }
@@ -162,7 +161,7 @@ fn main() {
     let broadcast = app.quit_broadcast;
     if let Some(mut sess) = app.session.take() {
         for id in sess.shutdown(broadcast) {
-            zellij::close_pane(&id);
+            mux::close_pane(&id);
         }
     }
     if let Err(e) = result {
@@ -215,9 +214,7 @@ fn set_mouse_capture(on: bool) {
 fn run_shell(repo: &std::path::Path, session_token: Option<String>, shrink: Option<u16>) -> ! {
     let token = session_token.unwrap_or_else(|| session::repo_token(repo));
     let dir = session::session_dir(&token);
-    if let Ok(id) = std::env::var("ZELLIJ_PANE_ID")
-        && !id.is_empty()
-    {
+    if let Some(id) = mux::current_pane_id() {
         let _ = session::register_extra_pane(&dir, repo, &id);
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
@@ -251,8 +248,7 @@ fn run_shell(repo: &std::path::Path, session_token: Option<String>, shrink: Opti
 }
 
 fn shrink_pane_height(steps: u16) {
-    let has_pane = std::env::var("ZELLIJ_PANE_ID").is_ok_and(|id| !id.is_empty());
-    if !has_pane {
+    if mux::current_pane_id().is_none() {
         return;
     }
     let read = || ratatui::crossterm::terminal::size().ok().map(|(_, h)| h);
@@ -272,7 +268,7 @@ fn shrink_pane_height(steps: u16) {
         if std::time::Instant::now() >= overall {
             break;
         }
-        zellij::resize_self_step("up");
+        mux::resize_self_step("up");
         let step_deadline = std::time::Instant::now() + Duration::from_millis(600);
         let mut changed = false;
         while std::time::Instant::now() < step_deadline {
@@ -334,7 +330,7 @@ fn run(
                     s.step = p - w;
                 }
                 if w.saturating_sub(s.target) > s.step / 2 {
-                    zellij::resize_self_step("right");
+                    mux::resize_self_step("right");
                     s.prev = Some(w);
                 }
             }
@@ -411,7 +407,7 @@ fn run(
         if app.pending_focus_jump {
             app.pending_focus_jump = false;
             if let Some(target) = app.session.as_ref().and_then(|s| s.diff_target_pane()) {
-                std::thread::spawn(move || zellij::focus_pane(&target));
+                std::thread::spawn(move || mux::focus_pane(&target));
             }
         }
         if let Some(text) = app.pending_copy.take() {
@@ -501,7 +497,7 @@ fn open_editor(
         && sess.request_editor(file, line)
     {
         if let Some(target) = sess.editor_target_pane() {
-            std::thread::spawn(move || zellij::focus_pane(&target));
+            std::thread::spawn(move || mux::focus_pane(&target));
         }
         return Ok(());
     }
